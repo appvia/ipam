@@ -1,0 +1,13 @@
+# Copyright 2026 Appvia Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Build output
+/dist
+/ipam
+*.exe
+*.test
+*.out
+# Local tooling state
+.codegraph/
+.omo/
+.DS_Store
