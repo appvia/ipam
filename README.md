@@ -496,12 +496,24 @@ The platform policy grants `s3:GetObject`, `s3:PutObject` and
 ### Azure role assignment for an environment
 
 Environment identities get two assignments at container scope. One is
-`Storage Blob Data Reader`. The other is a data-actions-only custom role
-holding just `Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read`
-and `.../blobs/write` (no delete, no add, no management-plane actions), with a
-version 2.0 condition that allows `blobs/write` only on the environment's own
-reservations documents. This is the condition `terraform-azurerm-ipam`
-renders for an environment that owns `uks-prod` and `ukw-prod`:
+`Storage Blob Data Reader`. The other carries a version 2.0 condition that
+allows `blobs/write` only on the environment's own reservations documents.
+`terraform-azurerm-ipam` offers two ways to grant it, chosen by
+`environment_role`:
+
+- `builtin` (the default): the built-in `Storage Blob Data Contributor` role.
+  The condition below is extended with clauses that deny `blobs/delete`,
+  `blobs/add/action` and `blobs/move/action`. That role also includes
+  management-plane actions such as deleting or modifying the container, which
+  conditions can't restrict. The module puts a `CanNotDelete` lock on the
+  storage account, which blocks container deletion through ARM, and soft delete
+  covers the rest.
+- `custom`: a data-actions-only custom role holding just
+  `Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read` and
+  `.../blobs/write` (no delete, no add, no management-plane actions).
+
+This is the condition the module renders in `custom` mode for an environment
+that owns `uks-prod` and `ukw-prod`:
 
 ```text
 (
@@ -519,7 +531,8 @@ renders for an environment that owns `uks-prod` and `ukw-prod`:
 
 Don't give environment identities the built-in `Contributor` role. It
 includes management-plane actions such as deleting the container. The
-platform identity gets `Storage Blob Data Contributor` at container scope.
+platform identity gets `Storage Blob Data Contributor` at container scope
+without a condition.
 
 The storage account must **not** have hierarchical namespace (Data Lake Gen2)
 enabled. A rename there can move a blob past the path conditions above.
