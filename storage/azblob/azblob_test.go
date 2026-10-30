@@ -525,7 +525,9 @@ func TestUnknownOutcomeWhenTheServerHangsPastTryTimeout(t *testing.T) {
 				AccountURL: server.URL, Container: "ipam", Credential: staticCredential{}, Transport: server.Client(),
 				retry: func(o *policy.RetryOptions) {
 					o.MaxRetries = -1
-					o.TryTimeout = 100 * time.Millisecond
+					// Wide enough that the TLS handshake and request headers are written first,
+					// even on a loaded runner under the race detector.
+					o.TryTimeout = time.Second
 				},
 			})
 			if err != nil {
