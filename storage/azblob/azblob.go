@@ -392,9 +392,11 @@ const reservationsPrefix = "reservations/"
 // Inspect reports the account's hierarchical namespace (GetAccountInfo), blob
 // soft delete (blob service properties) and blob versioning. Versioning is
 // configured through Azure Resource Manager and is not visible to data-plane
-// roles, so it is detected from data access: a reservations document whose
-// properties carry an x-ms-version-id is versioned. Every request is a read; a
-// property the caller may not read is storage.Unknown.
+// roles, so it is detected from data access: if any reservations document's
+// properties carry an x-ms-version-id, versioning is on. Without one it is
+// storage.Unknown, never No, because documents that predate versioning have no
+// version id. Every request is a read; a property the caller may not read is
+// storage.Unknown.
 func (s *Store) Inspect(ctx context.Context) (storage.Info, error) {
 	var info storage.Info
 
@@ -452,10 +454,10 @@ func (s *Store) versioning(ctx context.Context) (storage.TriState, error) {
 		if props.VersionID != nil && *props.VersionID != "" {
 			return storage.Yes, nil
 		}
-
-		return storage.No, nil
 	}
 
+	// Documents written before versioning was enabled have no version id until they
+	// are overwritten, so unversioned documents cannot show that versioning is off.
 	return storage.Unknown, nil
 }
 

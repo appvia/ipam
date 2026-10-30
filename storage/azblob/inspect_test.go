@@ -24,6 +24,7 @@ type fakeAccount struct {
 	blobs          []string
 	head           int
 	versionID      string
+	versionIDs     map[string]string // by blob path suffix; overrides versionID
 	mu             sync.Mutex
 	methodsAndURLs []string
 }
@@ -81,8 +82,16 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("ETag", `"0x1"`)
 
-		if f.versionID != "" {
-			w.Header().Set("x-ms-version-id", f.versionID)
+		versionID := f.versionID
+
+		for suffix, id := range f.versionIDs {
+			if strings.HasSuffix(r.URL.Path, suffix) {
+				versionID = id
+			}
+		}
+
+		if versionID != "" {
+			w.Header().Set("x-ms-version-id", versionID)
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -107,19 +116,27 @@ func TestInspectAzureAccount(t *testing.T) {
 			storage.Info{Versioning: storage.Yes, SoftDelete: storage.Yes, HierarchicalNamespace: storage.No},
 		},
 		{
-			"nothing enabled",
+			"no blob has a version id: documents may predate versioning, so unknown",
 			&fakeAccount{hns: "false", softDelete: disabled, blobs: reservations},
-			storage.Info{Versioning: storage.No, SoftDelete: storage.No, HierarchicalNamespace: storage.No},
+			storage.Info{Versioning: storage.Unknown, SoftDelete: storage.No, HierarchicalNamespace: storage.No},
+		},
+		{
+			"first document unversioned, a later one versioned",
+			&fakeAccount{
+				hns: "false", softDelete: disabled, blobs: reservations,
+				versionIDs: map[string]string{"/pfx/reservations/b.json": "2026-10-30T00:00:00.0000000Z"},
+			},
+			storage.Info{Versioning: storage.Yes, SoftDelete: storage.No, HierarchicalNamespace: storage.No},
 		},
 		{
 			"hierarchical namespace",
 			&fakeAccount{hns: "true", softDelete: disabled, blobs: reservations},
-			storage.Info{Versioning: storage.No, SoftDelete: storage.No, HierarchicalNamespace: storage.Yes},
+			storage.Info{Versioning: storage.Unknown, SoftDelete: storage.No, HierarchicalNamespace: storage.Yes},
 		},
 		{
 			"container-scoped role cannot read service properties or account info",
 			&fakeAccount{accountInfo: http.StatusForbidden, serviceProps: http.StatusForbidden, blobs: reservations},
-			storage.Info{Versioning: storage.No, SoftDelete: storage.Unknown, HierarchicalNamespace: storage.Unknown},
+			storage.Info{Versioning: storage.Unknown, SoftDelete: storage.Unknown, HierarchicalNamespace: storage.Unknown},
 		},
 		{
 			"no reservations document to read",
@@ -160,8 +177,8 @@ func TestInspectAzureAccount(t *testing.T) {
 					t.Fatalf("Inspect sent a non-read request: %s", request)
 				}
 
-				if strings.HasPrefix(request, "HEAD ") && !strings.HasSuffix(strings.SplitN(request, "?", 2)[0], "/pfx/reservations/a.json") {
-					t.Fatalf("Inspect read %s, want the first reservations document", request)
+				if strings.HasPrefix(request, "HEAD ") && !strings.Contains(strings.SplitN(request, "?", 2)[0], "/pfx/reservations/") {
+					t.Fatalf("Inspect read %s, want a reservations document", request)
 				}
 			}
 		})
