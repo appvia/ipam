@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format follows
 
 - The release workflow publishes the GitHub release when a `v*` tag is pushed,
   instead of creating a draft.
+- Update all dependencies to their latest versions.
+- Require Go 1.27.3.
 
 ## [0.1.0] - 2026-10-30
 
