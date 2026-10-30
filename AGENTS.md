@@ -75,7 +75,7 @@ GATE_CREATE_ITERATIONS=1000 go test -run TestCreatePoolRaceLocalLoop .
 ```
 
 ## NOTES
-- CI (`.github/workflows/test.yml`): `make test` + golangci-lint v2.14.0 + license header check on ubuntu; `go test ./storage/local/...` on windows; emulators + probe + `make test-integration`.
+- CI (`.github/workflows/test.yml`): `go test ./...` on ubuntu, macos and windows (`-race` on ubuntu only via `make test`); a separate ubuntu `lint` job runs golangci-lint v2.14.0 and the license header check; emulators + probe + `make test-integration` on ubuntu. Actions are SHA-pinned (`pinact run -u`).
 - Headers: `scripts/license-headers.sh` adds/checks the Apache-2.0 header on non-Go files too (CI step `License headers`); golangci `goheader` enforces Go files. `testdata/`, `docs/` and `templates/` are skipped.
 - Cross-process tests re-exec the test binary via `IPAM_CROSS_PROCESS_WORKER`/`IPAM_CROSS_PROCESS_DIRECTORY` (root) and `IPAM_LOCAL_CROSS_PROCESS_DIR`/`IPAM_LOCAL_FRESH_DIR` (storage/local); do not set them by hand.
 - `.omo/` and `.codegraph/` are gitignored tooling state; the probe writes `.omo/evidence/emulators.json`.
