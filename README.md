@@ -384,7 +384,9 @@ The same command run with the platform identity's full access FAILs on
 
 The `fragmentation` check only reads. It's described in
 [Monitoring](#monitoring). A fragmentation WARN makes the overall result
-`warn`, which still exits 0.
+`warn`, which still exits 0. Free-space metrics ignore cooling ranges;
+strict cooldown can refuse a request even when allocatable > 0. The active
+cooling range count is reported separately.
 
 **Limit:** doctor can't detect a backend that ignores conditional DELETE,
 because probing that would delete data. It only covers conditional writes.
@@ -510,12 +512,17 @@ fragmentation           net     PASS    util 0.0%, free 65536 of 65536, largest 
 
 The detail lists utilisation, free addresses, the largest free block and the
 free blocks by prefix length. When the pool has allocations, it adds the
-pool's most requested prefix length, how many of those are allocatable now
+pool's most requested prefix length, how many of those are allocatable
 against how many would fit if the free space were packed (capacity), and the
 fragmentation index. With `-o json` the same numbers are in `stats`:
 `utilization`, `total`, `free`, `allocatable`, `capacity`,
 `fragmentation_index`, `largest_free`, `free_blocks`, `reference_length`,
 `strategy` and `cooldown`.
+
+Free space, allocatable, capacity and the fragmentation index ignore cooling
+ranges: they measure fragmentation, not immediate availability under cooldown.
+Strict cooldown may refuse a request even when allocatable > 0. The detail
+appends `cooling N` when N > 0, counting active cooling ranges separately.
 
 The check WARNs when the fragmentation index is 0.5 or more and the capacity
 is at least 4, or when the statistics can't be read. It never FAILs, and a

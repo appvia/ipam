@@ -20,9 +20,10 @@ type PoolStats struct {
 	PoolID string
 	Policy PoolPolicy
 	// Allocations counts the pool's allocation records; Cooling counts released
-	// CIDRs whose cooldown has not expired at the client's clock.
+	// CIDRs whose cooldown has not expired at the client's clock, separately
+	// from free-space metrics, which ignore cooling ranges.
 	Allocations, Cooling int
-	// Total and Free are address counts.
+	// Total and Free are address counts; Free includes cooling ranges.
 	Total, Free *big.Int
 	// Largest is the largest free block; the zero value when nothing is free.
 	Largest netip.Prefix
@@ -31,13 +32,15 @@ type PoolStats struct {
 	// ReferenceLength is the prefix length used for the reference metrics, 0 for none.
 	ReferenceLength int
 	// Allocatable is the number of reference-sized prefixes obtainable from whole
-	// free blocks; nil without a reference length.
+	// free blocks, ignoring cooling ranges; nil without a reference length.
+	// Strict cooldown may refuse a request even when Allocatable is positive.
 	Allocatable *big.Int
 	// Capacity is the number of reference-sized prefixes if the free space were
-	// perfectly packed; nil without a reference length.
+	// perfectly packed, ignoring cooling ranges; nil without a reference length.
 	Capacity *big.Int
 	// FragmentationIndex is 1 - Allocatable/Capacity; nil without a reference
-	// length or when Capacity is zero.
+	// length or when Capacity is zero. Like Allocatable and Capacity, it ignores
+	// cooling ranges; Cooling reports their count separately.
 	FragmentationIndex *big.Rat
 }
 

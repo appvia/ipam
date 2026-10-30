@@ -37,6 +37,9 @@ Checks:
                           free blocks by prefix length and, for the pool's most
                           requested prefix length, how much of the free space is
                           allocatable and the fragmentation index. Read-only.
+                          These metrics ignore cooling ranges; strict cooldown
+                          may refuse even when allocatable > 0. Active cooling
+                          ranges are counted separately as "cooling N".
                           WARN when the index is >= 0.5 and at least 4 such
                           prefixes would fit if the free space were packed, or
                           when the statistics cannot be read (not found,
@@ -429,6 +432,10 @@ func fragmentationDetail(stats ipam.PoolStats) string {
 		if stats.FragmentationIndex != nil {
 			detail += ", index " + stats.FragmentationIndex.FloatString(2)
 		}
+	}
+
+	if stats.Cooling > 0 {
+		detail += fmt.Sprintf(", cooling %d", stats.Cooling)
 	}
 
 	return detail
