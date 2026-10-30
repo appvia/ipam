@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "kind": "pool",
+  "pool_id": "prod-main",
+  "incarnation": "0123456789abcdef0123456789abcdef",
+  "family": 4,
+  "cidrs": [
+    "10.0.0.0/16",
+    "10.2.0.0/16"
+  ],
+  "parent": {
+    "pool_id": "global",
+    "allocation_id": "pool:prod-main:0123456789abcdef0123456789abcdef"
+  },
+  "description": "production",
+  "labels": {
+    "region": "eu-west-1",
+    "team": "platform"
+  }
+}
