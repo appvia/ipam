@@ -21,6 +21,11 @@ type parentJSON struct {
 	AllocationID string `json:"allocation_id"`
 }
 
+type cooldownJSON struct {
+	Mode     string `json:"mode"`
+	Duration string `json:"duration"`
+}
+
 type poolJSON struct {
 	ID          string            `json:"id"`
 	Family      int               `json:"family"`
@@ -28,6 +33,8 @@ type poolJSON struct {
 	Parent      *parentJSON       `json:"parent,omitempty"`
 	Description string            `json:"description"`
 	Labels      map[string]string `json:"labels"`
+	Strategy    string            `json:"strategy"`
+	Cooldown    *cooldownJSON     `json:"cooldown,omitempty"`
 }
 
 type requestJSON struct {
@@ -68,6 +75,14 @@ func toPoolJSON(pool ipam.Pool) poolJSON {
 		CIDRs:       make([]string, 0, len(pool.CIDRs)),
 		Description: pool.Description,
 		Labels:      pool.Labels,
+		Strategy:    string(pool.Policy.Strategy),
+	}
+
+	if pool.Policy.Cooldown.Mode != ipam.CooldownNone {
+		out.Cooldown = &cooldownJSON{
+			Mode:     string(pool.Policy.Cooldown.Mode),
+			Duration: pool.Policy.Cooldown.Duration.String(),
+		}
 	}
 
 	for _, cidr := range pool.CIDRs {
@@ -116,7 +131,7 @@ func (c *cli) printPools(pools []ipam.Pool, single bool) error {
 	}
 
 	table := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "ID\tFAMILY\tCIDRS\tPARENT\tDESCRIPTION\tLABELS")
+	_, _ = fmt.Fprintln(table, "ID\tFAMILY\tCIDRS\tPARENT\tSTRATEGY\tCOOLDOWN\tDESCRIPTION\tLABELS")
 
 	for _, pool := range pools {
 		item := toPoolJSON(pool)
@@ -126,9 +141,14 @@ func (c *cli) printPools(pools []ipam.Pool, single bool) error {
 			parent = item.Parent.PoolID
 		}
 
-		_, _ = fmt.Fprintf(table, "%s\tIPv%d\t%s\t%s\t%s\t%s\n",
+		cooldown := "-"
+		if item.Cooldown != nil {
+			cooldown = item.Cooldown.Mode + " " + item.Cooldown.Duration
+		}
+
+		_, _ = fmt.Fprintf(table, "%s\tIPv%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			item.ID, item.Family, strings.Join(item.CIDRs, ","), parent,
-			dash(item.Description), formatLabels(item.Labels))
+			item.Strategy, cooldown, dash(item.Description), formatLabels(item.Labels))
 	}
 
 	return table.Flush()

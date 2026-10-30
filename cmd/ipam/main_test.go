@@ -149,8 +149,8 @@ func assertKeys(t *testing.T, object map[string]any, want ...string) {
 }
 
 var (
-	poolKeys       = []string{"id", "family", "cidrs", "description", "labels"}
-	childPoolKeys  = []string{"id", "family", "cidrs", "parent", "description", "labels"}
+	poolKeys       = []string{"id", "family", "cidrs", "description", "labels", "strategy"}
+	childPoolKeys  = []string{"id", "family", "cidrs", "parent", "description", "labels", "strategy"}
 	allocationKeys = []string{"id", "pool_id", "cidr", "request", "description", "labels", "created_at"}
 )
 
