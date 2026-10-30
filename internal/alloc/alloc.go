@@ -79,7 +79,9 @@ func Select(in Input) (netip.Prefix, error) {
 		return netip.Prefix{}, fmt.Errorf("select cooldown mode: %w", ErrInvalidArgument)
 	}
 
-	var freeBlocks []netip.Prefix
+	var freeBlocks, cleanBlocks []netip.Prefix
+
+	var originalBits []int
 
 	eligible := false
 
@@ -102,7 +104,36 @@ func Select(in Input) (netip.Prefix, error) {
 			return netip.Prefix{}, fmt.Errorf("select free space: %w", errors.Join(ErrInvalidCIDR, err))
 		}
 
-		freeBlocks = append(freeBlocks, free.Prefixes()...)
+		blocks := free.Prefixes()
+		freeBlocks = append(freeBlocks, blocks...)
+
+		if in.CooldownMode == CooldownNone {
+			continue
+		}
+
+		// Subtract cooling once per parent, retaining the original free blocks
+		// so fit-aware can compare their sizes rather than the split pieces.
+		for _, cooling := range in.Cooling {
+			builder.RemovePrefix(cooling.Masked())
+		}
+
+		clean, err := builder.IPSet()
+		if err != nil {
+			return netip.Prefix{}, fmt.Errorf("select non-cooling space: %w", errors.Join(ErrInvalidCIDR, err))
+		}
+
+		original := 0
+
+		// Both prefix lists are address-sorted, and subtraction cannot join
+		// separate free blocks, so every clean block has one containing block.
+		for _, block := range clean.Prefixes() {
+			for !blocks[original].Contains(block.Addr()) {
+				original++
+			}
+
+			cleanBlocks = append(cleanBlocks, block)
+			originalBits = append(originalBits, blocks[original].Bits())
+		}
 	}
 
 	if !eligible {
@@ -118,28 +149,16 @@ func Select(in Input) (netip.Prefix, error) {
 		return best, nil
 	}
 
-	var cleanBlocks []netip.Prefix
+	if in.CooldownMode == CooldownFitAware {
+		fitting := cleanBlocks[:0]
 
-	for _, block := range freeBlocks {
-		if block.Bits() > in.Length || (in.CooldownMode == CooldownFitAware && block.Bits() != bestBits) {
-			continue
+		for index, block := range cleanBlocks {
+			if originalBits[index] == bestBits {
+				fitting = append(fitting, block)
+			}
 		}
 
-		// Subtraction cannot join separate maximal free blocks. Keeping each
-		// block separate also preserves its original size for fit-aware.
-		var builder netipx.IPSetBuilder
-		builder.AddPrefix(block)
-
-		for _, cooling := range in.Cooling {
-			builder.RemovePrefix(cooling.Masked())
-		}
-
-		clean, err := builder.IPSet()
-		if err != nil {
-			return netip.Prefix{}, fmt.Errorf("select non-cooling space: %w", errors.Join(ErrInvalidCIDR, err))
-		}
-
-		cleanBlocks = append(cleanBlocks, clean.Prefixes()...)
+		cleanBlocks = fitting
 	}
 
 	clean, _ := choose(cleanBlocks, in.Length, in.Strategy)
