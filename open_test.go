@@ -234,14 +234,17 @@ func TestOpenParsesTargets(t *testing.T) {
 func TestOpenFileURLGivesWorkingLocalStore(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "store")
 
-	store, err := OpenStorage(t.Context(), (&url.URL{Scheme: "file", Path: dir}).String())
+	store, err := OpenStorage(t.Context(), fileURL(dir))
 	if err != nil {
 		t.Fatalf("OpenStorage() error = %v", err)
 	}
 
-	if _, ok := store.(*local.Store); !ok {
+	localStore, ok := store.(*local.Store)
+	if !ok {
 		t.Fatalf("OpenStorage() = %T, want *local.Store", store)
 	}
+
+	t.Cleanup(func() { _ = localStore.Close() })
 
 	assertRoundTrip(t, store)
 }
@@ -471,5 +474,38 @@ func TestOpenAzureContainerFormWithoutConnectionStringIsRejected(t *testing.T) {
 	_, err := OpenStorage(t.Context(), "azblob://cnt/p")
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("OpenStorage() error = %v, want ErrInvalidArgument", err)
+	}
+}
+
+// fileURL turns a directory into a file URL that parses on every OS: on Windows
+// C:\dir becomes file:///C:/dir.
+func fileURL(dir string) string {
+	path := filepath.ToSlash(dir)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	return (&url.URL{Scheme: "file", Path: path}).String()
+}
+
+func TestFileDir(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rel     string
+		windows bool
+		want    string
+	}{
+		{"posix path", "tmp/x", false, "/tmp/x"},
+		{"posix drive-like path stays rooted", "C:/Users/x", false, "/C:/Users/x"},
+		{"windows drive path", "C:/Users/x", true, "C:/Users/x"},
+		{"windows lower-case drive", "d:/data", true, "d:/data"},
+		{"windows path without a drive", "tmp/x", true, "/tmp/x"},
+		{"windows bare drive", "C:", true, "/C:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fileDir(tc.rel, tc.windows); got != tc.want {
+				t.Fatalf("fileDir(%q, %v) = %q, want %q", tc.rel, tc.windows, got, tc.want)
+			}
+		})
 	}
 }

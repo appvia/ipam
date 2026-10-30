@@ -254,6 +254,8 @@ func TestPoolIncarnationPreventsABAOnMemoryAndLocal(t *testing.T) {
 			store, err := local.New(filepath.Join(t.TempDir(), "store"))
 			assertNoError(t, err)
 
+			t.Cleanup(func() { _ = store.Close() })
+
 			return store
 		},
 	}
@@ -275,6 +277,8 @@ func TestPoolIncarnationABANegativeControl(t *testing.T) {
 
 	store, err := local.New(filepath.Join(t.TempDir(), "store"))
 	assertNoError(t, err)
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	allocation := runABARace(t, store, fixedReader(0x11), fixedReader(0x11))
 

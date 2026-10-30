@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/appvia/ipam/storage"
@@ -44,7 +45,7 @@ type openTarget struct {
 //	s3://<bucket>/<prefix>?region=..&endpoint=..&path_style=true
 //	azblob://<account>.blob.core.windows.net/<container>/<prefix>  (ARM_* credentials)
 //	azblob://<container>/<prefix>                                  (AZURE_STORAGE_CONNECTION_STRING)
-//	file:///abs/path
+//	file:///abs/path                                               (Windows: file:///C:/path)
 //	mem://                                                         (tests only)
 //
 // Unknown schemes, credentials in the URL and malformed values are rejected
@@ -293,7 +294,19 @@ func parseFile(u *url.URL) (openTarget, error) {
 		return openTarget{}, invalidURL("file URL needs an absolute path")
 	}
 
-	return openTarget{scheme: "file", dir: "/" + rel}, nil
+	return openTarget{scheme: "file", dir: fileDir(rel, runtime.GOOS == "windows")}, nil
+}
+
+// fileDir turns the validated URL path (without its leading slash) into a
+// directory. On Windows file:///C:/dir names the drive path C:/dir; elsewhere
+// the path is always rooted at /, so C:/dir stays the absolute /C:/dir.
+func fileDir(rel string, windows bool) string {
+	if windows && len(rel) > 3 && rel[1] == ':' && rel[2] == '/' &&
+		(rel[0] >= 'A' && rel[0] <= 'Z' || rel[0] >= 'a' && rel[0] <= 'z') {
+		return rel
+	}
+
+	return "/" + rel
 }
 
 func parseMem(u *url.URL) (openTarget, error) {

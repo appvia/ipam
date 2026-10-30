@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -43,7 +44,7 @@ type result struct {
 func newFileHarness(t *testing.T) *harness {
 	t.Helper()
 
-	return &harness{t: t, backend: "file://" + t.TempDir(), env: map[string]string{}, open: openClient}
+	return &harness{t: t, backend: fileURL(t.TempDir()), env: map[string]string{}, open: openClient}
 }
 
 func newMemHarness(t *testing.T) *harness {
@@ -435,7 +436,7 @@ func TestGenericErrorExitsOne(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := &harness{t: t, backend: "file://" + dir, env: map[string]string{}, open: openClient}
+	h := &harness{t: t, backend: fileURL(dir), env: map[string]string{}, open: openClient}
 
 	res := h.run("pool", "get", "p")
 	if res.code != exitError || !strings.Contains(res.stderr, "schema") {
@@ -572,4 +573,15 @@ func TestLibraryValidationErrorsExitTwo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fileURL turns a directory into a file URL that parses on every OS: on Windows
+// C:\dir becomes file:///C:/dir.
+func fileURL(dir string) string {
+	path := filepath.ToSlash(dir)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	return (&url.URL{Scheme: "file", Path: path}).String()
 }

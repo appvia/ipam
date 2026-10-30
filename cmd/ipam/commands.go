@@ -39,6 +39,7 @@ type cli struct {
 	backend     string
 	output      string
 	started     bool
+	closers     []io.Closer
 }
 
 func (c *cli) rootCommand() *cobra.Command {
@@ -112,7 +113,21 @@ func (c *cli) client(cmd *cobra.Command) (*ipam.Client, error) {
 		return nil, err
 	}
 
-	return c.open(cmd.Context(), backend)
+	client, err := c.open(cmd.Context(), backend)
+	if err != nil {
+		return nil, err
+	}
+
+	c.closers = append(c.closers, client)
+
+	return client, nil
+}
+
+// closeAll releases every client and store the command opened.
+func (c *cli) closeAll() {
+	for _, closer := range c.closers {
+		_ = closer.Close()
+	}
 }
 
 func (c *cli) versionCommand() *cobra.Command {

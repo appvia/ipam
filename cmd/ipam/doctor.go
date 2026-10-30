@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -92,6 +93,10 @@ func (c *cli) doctorCommand() *cobra.Command {
 			store, err := c.openStorage(cmd.Context(), backend)
 			if err != nil {
 				return err
+			}
+
+			if closer, ok := store.(io.Closer); ok {
+				c.closers = append(c.closers, closer)
 			}
 
 			report := diagnose(cmd.Context(), store, strings.HasPrefix(backend, "file:"), expectations)

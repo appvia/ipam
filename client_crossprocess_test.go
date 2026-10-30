@@ -31,6 +31,8 @@ func TestCrossProcessLocalAllocationProof(t *testing.T) {
 		t.Fatalf("local.New() error = %v", err)
 	}
 
+	t.Cleanup(func() { _ = store.Close() })
+
 	client := ipam.New(store, ipam.WithMaxAttempts(0))
 
 	_, err = client.CreatePool(t.Context(), ipam.PoolSpec{
@@ -113,6 +115,8 @@ func runAllocationWorker(t *testing.T, worker string) {
 	if err != nil {
 		t.Fatalf("local.New() error = %v", err)
 	}
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	client := ipam.New(store, ipam.WithMaxAttempts(0))
 

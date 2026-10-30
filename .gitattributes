@@ -1,0 +1,5 @@
+# Copyright 2026 Appvia Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Check out text files with LF on every OS so byte-for-byte golden files match.
+* text=auto eol=lf

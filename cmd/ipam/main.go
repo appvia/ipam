@@ -79,6 +79,8 @@ func runCLI(
 	openStorage openStorageFunc,
 ) int {
 	cli := &cli{stdout: stdout, getenv: getenv, open: open, openStorage: openStorage}
+	defer cli.closeAll()
+
 	root := cli.rootCommand()
 	root.SetArgs(args)
 	root.SetOut(stdout)

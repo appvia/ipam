@@ -93,6 +93,17 @@ func (lock *poolMutex) Unlock() {
 	lock.token <- struct{}{}
 }
 
+// Close releases what the storage backend holds open, such as the directory
+// handle of a local store. It does nothing for backends that hold nothing. The
+// client must not be used afterwards.
+func (client *Client) Close() error {
+	if closer, ok := client.store.(io.Closer); ok {
+		return closer.Close()
+	}
+
+	return nil
+}
+
 // New constructs a client over store.
 func New(store storage.Storage, options ...Option) *Client {
 	client := &Client{

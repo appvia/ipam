@@ -449,7 +449,7 @@ func TestDoctorUnreadablePoolDocumentFails(t *testing.T) {
 
 func TestDoctorFileBackendNotApplicable(t *testing.T) {
 	dir := t.TempDir()
-	h := &harness{t: t, backend: "file://" + dir, env: map[string]string{}, open: openClient}
+	h := &harness{t: t, backend: fileURL(dir), env: map[string]string{}, open: openClient}
 	h.ok("pool", "create", "p", "--cidr", "10.0.0.0/16")
 
 	res := h.run("doctor", "--expect-write", "p", "-o", "json")

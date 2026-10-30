@@ -425,6 +425,8 @@ func TestCreatePoolRaceLocalLoop(t *testing.T) {
 		store, err := local.New(filepath.Join(t.TempDir(), strconv.Itoa(iteration)))
 		assertNoError(t, err)
 
+		t.Cleanup(func() { _ = store.Close() })
+
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		results := make([]error, 8)
 		pools := make([]Pool, 8)

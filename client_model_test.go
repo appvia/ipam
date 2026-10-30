@@ -535,6 +535,8 @@ func TestLifecycleStressLocal(t *testing.T) {
 		seed := start + offset
 		store, err := local.New(filepath.Join(t.TempDir(), strconv.Itoa(seed)))
 		assertNoError(t, err)
+
+		t.Cleanup(func() { _ = store.Close() })
 		runLifecycleStress(t, int64(1000+seed), store, false)
 	}
 }
