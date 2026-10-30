@@ -720,6 +720,189 @@ func (client *Client) UpdatePoolMetadata(
 	}
 }
 
+// UpdatePoolPolicy replaces a pool's allocation policy; the strategy must be
+// explicit. It makes up to two independent compare-and-swap writes and changes
+// no other field: (1) if the strategy differs, pools/<id>.json is rewritten
+// (v1 for lowest, v2 otherwise); (2) if the cooldown differs,
+// reservations/<id>.json is rewritten. Turning the cooldown off clears every
+// release record, so the document becomes v1; changing only the duration keeps
+// the existing records' expiry times. Expired records are pruned on write.
+//
+// The two writes are not atomic. If the second fails after the first succeeded,
+// the returned error says so and the pool holds the new strategy with the old
+// cooldown; calling UpdatePoolPolicy again with the same policy completes it.
+// Documents of another incarnation are never rewritten: such a pool reports
+// Reason pool_incomplete after the retries, and an absent pool is ErrNotFound.
+func (client *Client) UpdatePoolPolicy(ctx context.Context, poolID string, policy PoolPolicy) error {
+	if err := validateClient(client); err != nil {
+		return err
+	}
+
+	if err := validatePoolID(poolID); err != nil {
+		return &OpError{Op: "update pool policy", Pool: poolID, Err: err}
+	}
+
+	if err := validatePolicy(policy, false); err != nil {
+		return &OpError{Op: "update pool policy", Pool: poolID, Err: err}
+	}
+
+	strategyWritten, err := client.updatePoolStrategy(ctx, poolID, policy.Strategy)
+	if err != nil {
+		return err
+	}
+
+	if err := client.updatePoolCooldown(ctx, poolID, policy.Cooldown); err != nil {
+		if strategyWritten {
+			return fmt.Errorf("strategy applied but cooldown not applied, retry to complete: %w", err)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// readUsableDocuments reads both documents of a pool. An absent pool document
+// is ErrNotFound; a reservations document that is absent or of another
+// incarnation yields the retryable incarnation_mismatch conflict.
+func (client *Client) readUsableDocuments(ctx context.Context, op, poolID string) (poolDocuments, error) {
+	documents, err := client.readPoolDocuments(ctx, poolID)
+	if err != nil {
+		return poolDocuments{}, err
+	}
+
+	if documents.pool == nil {
+		return poolDocuments{}, &OpError{Op: op, Pool: poolID, Err: ErrNotFound}
+	}
+
+	if !documents.usable() {
+		return poolDocuments{}, &OpError{
+			Op: op, Pool: poolID, Reason: "incarnation_mismatch",
+			Err: fmt.Errorf("pool documents have different incarnations: %w", ErrConflict),
+		}
+	}
+
+	return documents, nil
+}
+
+// retryPolicyWrite decides whether a failed attempt retries (nil) or ends the
+// operation; wait applies the backoff between attempts.
+func (client *Client) retryPolicyWrite(ctx context.Context, poolID string, attempt int, last error) error {
+	if client.attemptsExhausted(attempt) {
+		return contentionError("update pool policy", poolID, "", last)
+	}
+
+	return client.waitRetry(ctx, attempt-1)
+}
+
+// updatePoolStrategy reports whether the pool now holds the strategy because of
+// this call's write (or a write it observed landing), not because it already did.
+func (client *Client) updatePoolStrategy(
+	ctx context.Context,
+	poolID string,
+	strategy AllocationStrategy,
+) (bool, error) {
+	const op = "update pool policy"
+
+	for attempt := 1; ; attempt++ {
+		documents, err := client.readUsableDocuments(ctx, op, poolID)
+		if err == nil {
+			if documents.pool.Policy.Strategy == strategy {
+				return false, nil
+			}
+
+			stored := *documents.pool
+			stored.Policy.Strategy = strategy
+
+			next, encodeErr := encodePoolDocument(stored)
+			if encodeErr != nil {
+				return false, encodeErr
+			}
+
+			_, err = client.store.PutIfMatch(ctx, poolKey(poolID), next, documents.poolVersion)
+			if err == nil {
+				return true, nil
+			}
+
+			if errors.Is(err, storage.ErrUnknownOutcome) {
+				current, _, getErr := client.store.Get(ctx, poolKey(poolID))
+				if getErr == nil {
+					observed, decodeErr := decodePoolDocument(current, poolID)
+					if decodeErr == nil && observed.Incarnation == stored.Incarnation &&
+						observed.Policy.Strategy == strategy {
+						return true, nil
+					}
+				}
+			}
+
+			if !errors.Is(err, storage.ErrPreconditionFailed) &&
+				!errors.Is(err, storage.ErrUnknownOutcome) {
+				return false, mapStorageError(op, poolID, "", err)
+			}
+		} else if !conflictReason(err, "incarnation_mismatch") {
+			return false, err
+		}
+
+		if retryErr := client.retryPolicyWrite(ctx, poolID, attempt, err); retryErr != nil {
+			return false, retryErr
+		}
+	}
+}
+
+func (client *Client) updatePoolCooldown(ctx context.Context, poolID string, cooldown Cooldown) error {
+	const op = "update pool policy"
+
+	for attempt := 1; ; attempt++ {
+		documents, err := client.readUsableDocuments(ctx, op, poolID)
+		if err == nil {
+			if documents.reservations.Cooldown == cooldown {
+				return nil
+			}
+
+			stored := *documents.reservations
+			stored.Cooldown = cooldown
+
+			pruneReleased(&stored, client.clock().UTC())
+
+			if cooldown.Mode == CooldownNone {
+				stored.Released = nil
+			}
+
+			next, encodeErr := encodeReservationsDocument(stored)
+			if encodeErr != nil {
+				return encodeErr
+			}
+
+			_, err = client.store.PutIfMatch(ctx, reservationsKey(poolID), next, documents.reservationsVersion)
+			if err == nil {
+				return nil
+			}
+
+			if errors.Is(err, storage.ErrUnknownOutcome) {
+				current, _, getErr := client.store.Get(ctx, reservationsKey(poolID))
+				if getErr == nil {
+					observed, decodeErr := decodeReservationsDocument(current, poolID)
+					if decodeErr == nil && observed.Incarnation == stored.Incarnation &&
+						observed.Cooldown == cooldown {
+						return nil
+					}
+				}
+			}
+
+			if !errors.Is(err, storage.ErrPreconditionFailed) &&
+				!errors.Is(err, storage.ErrUnknownOutcome) {
+				return mapStorageError(op, poolID, "", err)
+			}
+		} else if !conflictReason(err, "incarnation_mismatch") {
+			return err
+		}
+
+		if retryErr := client.retryPolicyWrite(ctx, poolID, attempt, err); retryErr != nil {
+			return retryErr
+		}
+	}
+}
+
 // DeletePool removes a pool and releases its incarnation-keyed carve-out. It
 // is also the recovery path for every residue an interrupted create or delete
 // can leave: (a) a complete empty pool is deleted reservations first, then the

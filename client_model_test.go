@@ -35,11 +35,24 @@ type lifecycleFaultStore struct {
 // read by its writer. Reads and writes still race in the real backend; only the
 // audit history is protected. This also sees writes whose responses are lost
 // by lifecycleFaultStore, and retains violations after records are pruned.
+//
+// The strict guarantee is checked only against the document version the
+// writer read and CASed: cooldown mode and release records live in the same
+// document, so UpdatePoolPolicy switching to none (which clears the records)
+// is atomic with respect to every allocation write. An allocation committed
+// while the stored mode was not strict is never audited against records, and
+// one committed while it was strict sees exactly that version's records.
+//
+// Conversely, a transition from a strict version to a strict version must keep
+// every record still unexpired at the clock: a policy or Release write that
+// loses or shortens one would otherwise reopen cooling space unnoticed.
 type lifecycleCooldownStore struct {
 	storage.Storage
 	mu        sync.Mutex
 	snapshots map[lifecycleVersion]reservationsDocument
 	failures  []string
+	// now, when set, is the writers' fake clock; it enables the retention audit.
+	now func() time.Time
 }
 
 type lifecycleVersion struct {
@@ -99,6 +112,8 @@ func (store *lifecycleCooldownStore) PutIfMatch(
 		return next, nil
 	}
 
+	store.auditRetainedRecords(poolID, before, after)
+
 	for id, allocation := range after.Allocations {
 		if _, exists := before.Allocations[id]; exists || allocation.Request.Kind != RequestNext {
 			continue
@@ -117,6 +132,28 @@ func (store *lifecycleCooldownStore) PutIfMatch(
 	return next, nil
 }
 
+// auditRetainedRecords must be called with store.mu held.
+func (store *lifecycleCooldownStore) auditRetainedRecords(poolID string, before, after reservationsDocument) {
+	if store.now == nil || after.Cooldown.Mode != CooldownStrict {
+		return
+	}
+
+	now := store.now()
+
+	for cidr, expiry := range before.Released {
+		if !expiry.After(now) {
+			continue
+		}
+
+		if kept, found := after.Released[cidr]; !found || kept.Before(expiry) {
+			store.failures = append(store.failures, fmt.Sprintf(
+				"%s lost or shortened release %s active until %s (now %s, kept %v)",
+				poolID, cidr, expiry, now, kept,
+			))
+		}
+	}
+}
+
 func (store *lifecycleCooldownStore) assertInvariants(t *testing.T) {
 	t.Helper()
 
@@ -132,6 +169,14 @@ var lifecyclePolicies = []PoolPolicy{
 	{Strategy: StrategyBestFit, Cooldown: Cooldown{Mode: CooldownStrict, Duration: 30 * time.Minute}},
 	{Strategy: StrategyLowest},
 }
+
+// lifecyclePolicySwitches adds a strict policy that differs from the first
+// lifecyclePolicies entry only in duration, so the stress policy step also
+// changes the duration while strict stays configured.
+var lifecyclePolicySwitches = append(slices.Clone(lifecyclePolicies), PoolPolicy{
+	Strategy: StrategyBestFit,
+	Cooldown: Cooldown{Mode: CooldownStrict, Duration: 45 * time.Minute},
+})
 
 func (store *lifecycleFaultStore) setEnabled(enabled bool) {
 	store.mu.Lock()
@@ -379,8 +424,10 @@ func runLifecycleModel(t *testing.T, policy PoolPolicy) {
 	t.Helper()
 
 	base := memory.New()
-	audit := &lifecycleCooldownStore{Storage: base, snapshots: make(map[lifecycleVersion]reservationsDocument)}
 	clock := newCooldownTestClock()
+	audit := &lifecycleCooldownStore{
+		Storage: base, snapshots: make(map[lifecycleVersion]reservationsDocument), now: clock.now,
+	}
 	nextID := 0
 	client := New(audit, WithSleeper(noSleep), WithClock(clock.now), WithIDGenerator(func() string {
 		nextID++
@@ -450,8 +497,10 @@ func runLifecycleModel(t *testing.T, policy PoolPolicy) {
 func runLifecycleStress(t *testing.T, seed int64, base storage.Storage, disableLocks bool, policy PoolPolicy) {
 	t.Helper()
 
-	audit := &lifecycleCooldownStore{Storage: base, snapshots: make(map[lifecycleVersion]reservationsDocument)}
 	clock := newCooldownTestClock()
+	audit := &lifecycleCooldownStore{
+		Storage: base, snapshots: make(map[lifecycleVersion]reservationsDocument), now: clock.now,
+	}
 	faults := &lifecycleFaultStore{
 		Storage: audit,
 		random:  rand.New(rand.NewSource(seed)),
@@ -501,7 +550,7 @@ func runLifecycleStress(t *testing.T, seed int64, base storage.Storage, disableL
 			for range 40 {
 				childID := "child-" + strconv.Itoa(random.Intn(4))
 
-				switch random.Intn(6) {
+				switch random.Intn(7) {
 				case 0:
 					_, _ = clients[worker].CreatePool(t.Context(), PoolSpec{
 						ID:         childID,
@@ -509,6 +558,17 @@ func runLifecycleStress(t *testing.T, seed int64, base storage.Storage, disableL
 						Request:    Request{Kind: RequestNext, PrefixLength: 22},
 						Policy:     policy,
 					})
+				case 6:
+					poolID := "root"
+					if random.Intn(2) == 0 {
+						poolID = childID
+					}
+
+					_ = clients[worker].UpdatePoolPolicy(
+						t.Context(),
+						poolID,
+						lifecyclePolicySwitches[random.Intn(len(lifecyclePolicySwitches))],
+					)
 				case 1:
 					_, _ = clients[worker].Allocate(
 						t.Context(),
