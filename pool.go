@@ -174,7 +174,16 @@ func (client *Client) createPoolAttempt(
 			true,
 		)
 		if allocateErr != nil {
-			return Pool{}, createFinished, &OpError{Op: "create pool", Pool: spec.ID, Err: allocateErr}
+			var opErr *OpError
+
+			reason := ""
+			if errors.As(allocateErr, &opErr) && opErr.Reason == "cooldown" {
+				reason = "cooldown"
+			}
+
+			return Pool{}, createFinished, &OpError{
+				Op: "create pool", Pool: spec.ID, Reason: reason, Err: allocateErr,
+			}
 		}
 
 		pool.CIDRs = []netip.Prefix{allocation.CIDR}
@@ -204,14 +213,15 @@ func (client *Client) createPoolAttempt(
 
 // releaseOwnCarveOut withdraws the carve-out this CreatePool call created. The
 // ID is keyed by this call's incarnation, so it can never release another
-// incarnation's space; Release still refuses while any document of that
-// incarnation exists, which keeps a published child's carve-out in place.
+// incarnation's space. It records no cooldown for unpublished space, but still
+// refuses while any document of that incarnation exists, which keeps a
+// published child's carve-out in place.
 func (client *Client) releaseOwnCarveOut(ctx context.Context, parent *ParentRef, cause error) error {
 	if parent == nil {
 		return cause
 	}
 
-	releaseErr := client.Release(ctx, parent.PoolID, parent.AllocationID)
+	releaseErr := client.release(ctx, parent.PoolID, parent.AllocationID, false)
 	if releaseErr == nil || errors.Is(releaseErr, ErrNotFound) || conflictReason(releaseErr, "pool_in_use") {
 		return cause
 	}
