@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-30
+
 ### Added
 
 - Client library: pools, child pools carved from a parent, next-free and
@@ -19,3 +21,13 @@ All notable changes to this project are documented here. The format follows
 - `ipam` CLI with `pool`, `alloc`, `doctor` and `version` commands.
 - README covering concepts, document formats, access model, CLI, recovery and
   the concurrency model; runnable examples in `example_test.go`.
+- `ipam doctor` reports Azure blob versioning as unknown, not off, when no
+  reservations document carries a version id, because documents written before
+  versioning was enabled have none until they are overwritten.
+- Release workflow: a `v*` tag builds the CLI with goreleaser and creates a
+  draft GitHub release.
+- `scripts/license-headers.sh` and the `license-headers` make targets add and
+  check the Apache-2.0 header on non-Go files.
+
+[Unreleased]: https://github.com/appvia/ipam/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/appvia/ipam/releases/tag/v0.1.0
