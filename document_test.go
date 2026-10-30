@@ -20,6 +20,7 @@ func TestCodecRootDocumentsRoundTrip(t *testing.T) {
 			CIDRs:       []netip.Prefix{netip.MustParsePrefix("10.0.0.0/16")},
 			Description: "production",
 			Labels:      map[string]string{"team": "platform"},
+			Policy:      PoolPolicy{Strategy: StrategyLowest},
 		},
 		Incarnation: "0123456789abcdef0123456789abcdef",
 	}

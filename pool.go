@@ -29,6 +29,10 @@ type PoolSpec struct {
 	Request     Request
 	Description string
 	Labels      map[string]string
+	// Policy is the pool's own allocation policy; a child never inherits its
+	// parent's. StrategyDefault creates a best-fit pool. On a re-run against
+	// an existing pool, an unset strategy or cooldown matches any stored value.
+	Policy PoolPolicy
 }
 
 func poolKey(poolID string) string         { return poolsPrefix + poolID + documentSuffix }
@@ -128,10 +132,10 @@ func (client *Client) createPoolAttempt(
 	}
 
 	switch {
-	case documents.pool != nil && !poolMatchesSpec(*documents.pool, spec):
+	case documents.pool != nil && !poolMatchesSpec(*documents.pool, documents.reservations, spec):
 		return Pool{}, createFinished, poolExistsError(spec.ID)
 	case documents.usable():
-		return documents.pool.Pool, createFinished, nil
+		return documents.publicPool(), createFinished, nil
 	case documents.pool != nil:
 		return Pool{}, createIncomplete, errPoolWithoutReservations
 	case documents.reservations != nil:
@@ -148,6 +152,10 @@ func (client *Client) createPoolAttempt(
 		CIDRs:       append([]netip.Prefix(nil), spec.CIDRs...),
 		Description: spec.Description,
 		Labels:      cloneLabels(spec.Labels),
+		Policy:      spec.Policy,
+	}
+	if pool.Policy.Strategy == StrategyDefault {
+		pool.Policy.Strategy = StrategyBestFit
 	}
 
 	if spec.ParentPool != "" {
@@ -218,6 +226,7 @@ func (client *Client) releaseOwnCarveOut(ctx context.Context, parent *ParentRef,
 func (client *Client) publishPool(ctx context.Context, proposed poolDocument) (createOutcome, error) {
 	reservationsData, err := encodeReservationsDocument(reservationsDocument{
 		PoolID: proposed.ID, Incarnation: proposed.Incarnation, Allocations: map[string]Allocation{},
+		Cooldown: proposed.Policy.Cooldown,
 	})
 	if err != nil {
 		return createFinished, err
@@ -392,6 +401,15 @@ func (documents poolDocuments) usable() bool {
 		documents.pool.Incarnation == documents.reservations.Incarnation
 }
 
+// publicPool returns a usable pool with its concrete policy: the strategy
+// comes from the pool document and the cooldown from the reservations document.
+func (documents poolDocuments) publicPool() Pool {
+	pool := clonePool(documents.pool.Pool)
+	pool.Policy.Cooldown = documents.reservations.Cooldown
+
+	return pool
+}
+
 func (client *Client) readPoolDocuments(ctx context.Context, poolID string) (poolDocuments, error) {
 	var documents poolDocuments
 
@@ -428,6 +446,10 @@ func (client *Client) readPoolDocuments(ctx context.Context, poolID string) (poo
 
 func validatePoolSpec(spec PoolSpec) error {
 	if err := validatePoolID(spec.ID); err != nil {
+		return err
+	}
+
+	if err := validatePolicy(spec.Policy, true); err != nil {
 		return err
 	}
 
@@ -468,9 +490,14 @@ func reservedAllocationID(childID, incarnation string) string {
 	return "pool:" + childID + ":" + incarnation
 }
 
-func poolMatchesSpec(stored poolDocument, spec PoolSpec) bool {
+// poolMatchesSpec reports whether a create of spec is satisfied by the stored
+// pool. reservations is the stored reservations document, if any; the
+// cooldown is compared only when it belongs to the stored pool's incarnation,
+// so residue still takes the pool_incomplete path.
+func poolMatchesSpec(stored poolDocument, reservations *reservationsDocument, spec PoolSpec) bool {
 	if stored.Description != spec.Description ||
-		!maps.Equal(stored.Labels, cloneLabels(spec.Labels)) {
+		!maps.Equal(stored.Labels, cloneLabels(spec.Labels)) ||
+		!policyMatchesSpec(stored, reservations, spec.Policy) {
 		return false
 	}
 
@@ -480,6 +507,8 @@ func poolMatchesSpec(stored poolDocument, spec PoolSpec) bool {
 			CIDRs:       append([]netip.Prefix(nil), spec.CIDRs...),
 			Description: spec.Description,
 			Labels:      cloneLabels(spec.Labels),
+			// The policy was matched above, where unset fields match any value.
+			Policy: stored.Policy,
 		})
 
 		return err == nil && poolsEqual(stored.Pool, expected)
@@ -510,6 +539,21 @@ func poolMatchesSpec(stored poolDocument, spec PoolSpec) bool {
 	return stored.CIDRs[0] == request.CIDR
 }
 
+// policyMatchesSpec reports whether every policy field set in the spec equals
+// the stored value; unset fields match any stored value.
+func policyMatchesSpec(stored poolDocument, reservations *reservationsDocument, policy PoolPolicy) bool {
+	if policy.Strategy != StrategyDefault && policy.Strategy != stored.Policy.Strategy {
+		return false
+	}
+
+	if policy.Cooldown.Mode == CooldownNone ||
+		reservations == nil || reservations.Incarnation != stored.Incarnation {
+		return true
+	}
+
+	return policy.Cooldown == reservations.Cooldown
+}
+
 func poolExistsError(poolID string) error {
 	return &OpError{
 		Op: "create pool", Pool: poolID, Reason: "pool_exists", Err: ErrConflict,
@@ -537,7 +581,7 @@ func (client *Client) GetPool(ctx context.Context, poolID string) (Pool, error) 
 		return Pool{}, &OpError{Op: "get pool", Pool: poolID, Err: ErrNotFound}
 	}
 
-	return clonePool(documents.pool.Pool), nil
+	return documents.publicPool(), nil
 }
 
 // ListPools returns all pool definitions sorted by ID.
@@ -823,7 +867,8 @@ func poolsEqual(left, right Pool) bool {
 		slices.Equal(left.CIDRs, right.CIDRs) &&
 		parentEqual(left.Parent, right.Parent) &&
 		left.Description == right.Description &&
-		maps.Equal(left.Labels, right.Labels)
+		maps.Equal(left.Labels, right.Labels) &&
+		left.Policy == right.Policy
 }
 
 func parentEqual(left, right *ParentRef) bool {
