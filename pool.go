@@ -190,12 +190,16 @@ func (client *Client) createPoolAttempt(
 		pool.Parent = &ParentRef{PoolID: spec.ParentPool, AllocationID: carveID}
 	}
 
+	publicationPossible := false
+
 	canonical, err := canonicalPool(pool)
 	if err == nil {
 		if err = lock.LockContext(ctx); err == nil {
 			var outcome createOutcome
 
-			outcome, err = client.publishPool(ctx, poolDocument{Pool: canonical, Incarnation: incarnation})
+			outcome, publicationPossible, err = client.publishPool(
+				ctx, poolDocument{Pool: canonical, Incarnation: incarnation},
+			)
 			lock.Unlock()
 
 			if outcome == createFinished && err == nil {
@@ -203,25 +207,26 @@ func (client *Client) createPoolAttempt(
 			}
 
 			if outcome != createFinished {
-				return Pool{}, outcome, client.releaseOwnCarveOut(ctx, pool.Parent, err)
+				return Pool{}, outcome, client.releaseOwnCarveOut(ctx, pool.Parent, publicationPossible, err)
 			}
 		}
 	}
 
-	return Pool{}, createFinished, client.releaseOwnCarveOut(ctx, pool.Parent, err)
+	return Pool{}, createFinished, client.releaseOwnCarveOut(ctx, pool.Parent, publicationPossible, err)
 }
 
 // releaseOwnCarveOut withdraws the carve-out this CreatePool call created. The
 // ID is keyed by this call's incarnation, so it can never release another
-// incarnation's space. It records no cooldown for unpublished space, but still
-// refuses while any document of that incarnation exists, which keeps a
-// published child's carve-out in place.
-func (client *Client) releaseOwnCarveOut(ctx context.Context, parent *ParentRef, cause error) error {
+// incarnation's space. It records cooldown unless publication was impossible,
+// and refuses while any document of that incarnation exists.
+func (client *Client) releaseOwnCarveOut(
+	ctx context.Context, parent *ParentRef, publicationPossible bool, cause error,
+) error {
 	if parent == nil {
 		return cause
 	}
 
-	releaseErr := client.release(ctx, parent.PoolID, parent.AllocationID, false)
+	releaseErr := client.release(ctx, parent.PoolID, parent.AllocationID, publicationPossible)
 	if releaseErr == nil || errors.Is(releaseErr, ErrNotFound) || conflictReason(releaseErr, "pool_in_use") {
 		return cause
 	}
@@ -233,35 +238,39 @@ func (client *Client) releaseOwnCarveOut(ctx context.Context, parent *ParentRef,
 // with CreateIfAbsent, and verifies afterwards that the reservations document
 // still carries this incarnation. Any document it created and cannot keep is
 // removed again, conditionally on its own version.
-func (client *Client) publishPool(ctx context.Context, proposed poolDocument) (createOutcome, error) {
+func (client *Client) publishPool(ctx context.Context, proposed poolDocument) (createOutcome, bool, error) {
 	reservationsData, err := encodeReservationsDocument(reservationsDocument{
 		PoolID: proposed.ID, Incarnation: proposed.Incarnation, Allocations: map[string]Allocation{},
 		Cooldown: proposed.Policy.Cooldown,
 	})
 	if err != nil {
-		return createFinished, err
+		return createFinished, false, err
 	}
 
-	reservationsVersion, owned, err := client.createOwnDocument(
+	reservationsVersion, owned, _, err := client.createOwnDocument(
 		ctx, reservationsKey(proposed.ID), proposed.ID, reservationsData, proposed.Incarnation,
 	)
 	if err != nil {
-		return createFinished, err
+		return createFinished, false, err
 	}
 
 	if !owned {
-		return createIncomplete, errReservationsWithoutPool
+		return createIncomplete, false, errReservationsWithoutPool
 	}
+
+	publicationPossible := false
 
 	poolData, err := encodePoolDocument(proposed)
 	if err == nil {
 		var poolVersion storage.Version
 
-		poolVersion, owned, err = client.createOwnDocument(
+		poolVersion, owned, publicationPossible, err = client.createOwnDocument(
 			ctx, poolKey(proposed.ID), proposed.ID, poolData, proposed.Incarnation,
 		)
 		if err == nil && owned {
-			return client.verifyPublishedPool(ctx, proposed, poolVersion)
+			outcome, verifyErr := client.verifyPublishedPool(ctx, proposed, poolVersion)
+
+			return outcome, publicationPossible, verifyErr
 		}
 	}
 
@@ -269,10 +278,10 @@ func (client *Client) publishPool(ctx context.Context, proposed poolDocument) (c
 		ctx, reservationsKey(proposed.ID), proposed.ID, reservationsVersion, proposed.Incarnation,
 	)
 	if err != nil || cleanupErr != nil {
-		return createFinished, errors.Join(err, cleanupErr)
+		return createFinished, publicationPossible, errors.Join(err, cleanupErr)
 	}
 
-	return createRaced, poolExistsError(proposed.ID)
+	return createRaced, publicationPossible, poolExistsError(proposed.ID)
 }
 
 func (client *Client) verifyPublishedPool(
@@ -304,39 +313,40 @@ func (client *Client) verifyPublishedPool(
 }
 
 // createOwnDocument reports whether the document at key now holds this call's
-// incarnation because this call created it.
+// incarnation because this call created it, and whether its write may have
+// landed even if the document has since been deleted.
 func (client *Client) createOwnDocument(
 	ctx context.Context,
 	key, poolID string,
 	data []byte,
 	incarnation string,
-) (storage.Version, bool, error) {
+) (storage.Version, bool, bool, error) {
 	version, err := client.store.CreateIfAbsent(ctx, key, data)
 
 	switch {
 	case err == nil:
-		return version, true, nil
+		return version, true, true, nil
 	case errors.Is(err, storage.ErrPreconditionFailed):
-		return "", false, nil
+		return "", false, false, nil
 	case !errors.Is(err, storage.ErrUnknownOutcome):
-		return "", false, err
+		return "", false, false, err
 	}
 
 	current, version, getErr := client.store.Get(ctx, key)
 	if errors.Is(getErr, storage.ErrNotFound) {
-		return "", false, nil
+		return "", false, true, nil
 	}
 
 	if getErr != nil {
-		return "", false, getErr
+		return "", false, true, getErr
 	}
 
 	observed, decodeErr := documentIncarnation(key, poolID, current)
 	if decodeErr != nil {
-		return "", false, decodeErr
+		return "", false, true, decodeErr
 	}
 
-	return version, observed == incarnation, nil
+	return version, observed == incarnation, true, nil
 }
 
 // deleteOwnDocument removes a document of this incarnation. It never deletes a
