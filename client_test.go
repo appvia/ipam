@@ -420,7 +420,7 @@ func TestAllocateRejectsUnsupportedSchemaWithoutWrites(t *testing.T) {
 	data, version, err := base.Get(t.Context(), reservationsKey("prod"))
 	assertNoError(t, err)
 
-	data = bytes.Replace(data, []byte(`"schema_version": 1`), []byte(`"schema_version": 2`), 1)
+	data = bytes.Replace(data, []byte(`"schema_version": 1`), []byte(`"schema_version": 3`), 1)
 	_, err = base.PutIfMatch(t.Context(), reservationsKey("prod"), data, version)
 	assertNoError(t, err)
 

@@ -431,7 +431,7 @@ func TestGenericErrorExitsOne(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doc := `{"schema_version":2,"id":"p"}`
+	doc := `{"schema_version":3,"id":"p"}`
 	if err := os.WriteFile(filepath.Join(dir, "pools", "p.json"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}

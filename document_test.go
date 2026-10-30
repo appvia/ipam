@@ -75,7 +75,7 @@ func TestCodecRootMapsUnsupportedSchema(t *testing.T) {
 	t.Parallel()
 
 	_, err := decodePoolDocument(
-		[]byte(`{"schema_version":2,"kind":"pool","pool_id":"prod-main"}`),
+		[]byte(`{"schema_version":3,"kind":"pool","pool_id":"prod-main"}`),
 		"prod-main",
 	)
 	if !errors.Is(err, ErrUnsupportedSchema) {
