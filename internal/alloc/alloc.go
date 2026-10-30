@@ -6,6 +6,7 @@ package alloc
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 
 	"go4.org/netipx"
@@ -18,24 +19,72 @@ var (
 	ErrExhausted = errors.New("alloc: pool exhausted")
 	// ErrOverlap reports that an explicit prefix intersects an existing allocation.
 	ErrOverlap = errors.New("alloc: CIDR overlaps an existing allocation")
+	// ErrInvalidArgument reports an unknown strategy or cooldown mode.
+	ErrInvalidArgument = errors.New("alloc: invalid argument")
+	// ErrCooling reports that only cooling space fits the requested length.
+	ErrCooling = errors.New("alloc: only cooling space fits")
 )
 
-// Next returns the lowest available prefix of length from any eligible parent.
+// Strategy determines how free blocks are ranked.
+type Strategy uint8
+
+const (
+	StrategyLowest Strategy = iota
+	StrategyBestFit
+)
+
+// CooldownMode determines whether cooling prefixes may be reused.
+type CooldownMode uint8
+
+const (
+	CooldownNone CooldownMode = iota
+	CooldownStrict
+	CooldownFitAware
+)
+
+// Input describes a selection without changing any of its prefix slices.
+type Input struct {
+	Parents, Used, Cooling []netip.Prefix
+	Length                 int
+	Strategy               Strategy
+	CooldownMode           CooldownMode
+}
+
+// Next is the lowest-address compatibility wrapper for Select, without cooldown.
+func Next(parents, used []netip.Prefix, length int) (netip.Prefix, error) {
+	return Select(Input{Parents: parents, Used: used, Length: length})
+}
+
+// Select returns a prefix from one eligible parent using the requested strategy.
+// Best fit selects the tightest maximal free block, with lowest-address ties.
+// Strict excludes cooling space; fit-aware avoids it only in an original free
+// block of the same size as the choice without cooldown.
 //
 // IPv4-mapped IPv6 addresses are rejected rather than implicitly unmapped, so
 // callers must choose an unambiguous address family before allocation.
-func Next(parents, used []netip.Prefix, length int) (netip.Prefix, error) {
-	if !validPrefixes(parents) || !validPrefixes(used) {
-		return netip.Prefix{}, ErrInvalidCIDR
+func Select(in Input) (netip.Prefix, error) {
+	if !validPrefixes(in.Parents) || !validPrefixes(in.Used) || !validPrefixes(in.Cooling) {
+		return netip.Prefix{}, fmt.Errorf("select prefixes: %w", ErrInvalidCIDR)
 	}
 
-	var (
-		best     netip.Prefix
-		eligible bool
-	)
+	switch in.Strategy {
+	case StrategyLowest, StrategyBestFit:
+	default:
+		return netip.Prefix{}, fmt.Errorf("select strategy: %w", ErrInvalidArgument)
+	}
 
-	for _, parent := range parents {
-		if length < parent.Bits() || length > parent.Addr().BitLen() {
+	switch in.CooldownMode {
+	case CooldownNone, CooldownStrict, CooldownFitAware:
+	default:
+		return netip.Prefix{}, fmt.Errorf("select cooldown mode: %w", ErrInvalidArgument)
+	}
+
+	var freeBlocks []netip.Prefix
+
+	eligible := false
+
+	for _, parent := range in.Parents {
+		if in.Length < parent.Bits() || in.Length > parent.Addr().BitLen() {
 			continue
 		}
 
@@ -44,36 +93,91 @@ func Next(parents, used []netip.Prefix, length int) (netip.Prefix, error) {
 		var builder netipx.IPSetBuilder
 		builder.AddPrefix(parent.Masked())
 
-		for _, existing := range used {
+		for _, existing := range in.Used {
 			builder.RemovePrefix(existing.Masked())
 		}
 
 		free, err := builder.IPSet()
 		if err != nil {
-			return netip.Prefix{}, ErrInvalidCIDR
+			return netip.Prefix{}, fmt.Errorf("select free space: %w", errors.Join(ErrInvalidCIDR, err))
 		}
 
-		for _, block := range free.Prefixes() {
-			if block.Bits() > length {
-				continue
-			}
-
-			candidate := netip.PrefixFrom(block.Addr(), length).Masked()
-			if !best.IsValid() || candidate.Addr().Compare(best.Addr()) < 0 {
-				best = candidate
-			}
-		}
+		freeBlocks = append(freeBlocks, free.Prefixes()...)
 	}
 
 	if !eligible {
-		return netip.Prefix{}, ErrInvalidCIDR
+		return netip.Prefix{}, fmt.Errorf("select length: %w", ErrInvalidCIDR)
 	}
 
+	best, bestBits := choose(freeBlocks, in.Length, in.Strategy)
 	if !best.IsValid() {
-		return netip.Prefix{}, ErrExhausted
+		return netip.Prefix{}, fmt.Errorf("select free space: %w", ErrExhausted)
+	}
+
+	if in.CooldownMode == CooldownNone {
+		return best, nil
+	}
+
+	var cleanBlocks []netip.Prefix
+
+	for _, block := range freeBlocks {
+		if block.Bits() > in.Length || (in.CooldownMode == CooldownFitAware && block.Bits() != bestBits) {
+			continue
+		}
+
+		// Subtraction cannot join separate maximal free blocks. Keeping each
+		// block separate also preserves its original size for fit-aware.
+		var builder netipx.IPSetBuilder
+		builder.AddPrefix(block)
+
+		for _, cooling := range in.Cooling {
+			builder.RemovePrefix(cooling.Masked())
+		}
+
+		clean, err := builder.IPSet()
+		if err != nil {
+			return netip.Prefix{}, fmt.Errorf("select non-cooling space: %w", errors.Join(ErrInvalidCIDR, err))
+		}
+
+		cleanBlocks = append(cleanBlocks, clean.Prefixes()...)
+	}
+
+	clean, _ := choose(cleanBlocks, in.Length, in.Strategy)
+	if clean.IsValid() {
+		return clean, nil
+	}
+
+	if in.CooldownMode == CooldownStrict {
+		return netip.Prefix{}, fmt.Errorf("select non-cooling space: %w", ErrCooling)
 	}
 
 	return best, nil
+}
+
+func choose(blocks []netip.Prefix, length int, strategy Strategy) (netip.Prefix, int) {
+	var best netip.Prefix
+
+	bestBits := -1
+
+	for _, block := range blocks {
+		if block.Bits() > length {
+			continue
+		}
+
+		candidate := netip.PrefixFrom(block.Addr(), length)
+		better := !best.IsValid() || candidate.Addr().Less(best.Addr())
+
+		if strategy == StrategyBestFit && best.IsValid() && block.Bits() != bestBits {
+			better = block.Bits() > bestBits
+		}
+
+		if better {
+			best = candidate
+			bestBits = block.Bits()
+		}
+	}
+
+	return best, bestBits
 }
 
 // CheckExplicit validates that cidr belongs to one parent and is unallocated.
