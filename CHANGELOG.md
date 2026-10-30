@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
 ### Changed
 
 - The release workflow publishes the GitHub release when a `v*` tag is pushed,
@@ -40,5 +42,6 @@ All notable changes to this project are documented here. The format follows
 - `scripts/license-headers.sh` and the `license-headers` make targets add and
   check the Apache-2.0 header on non-Go files.
 
-[Unreleased]: https://github.com/appvia/ipam/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/appvia/ipam/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/appvia/ipam/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/appvia/ipam/releases/tag/v0.1.0
