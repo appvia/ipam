@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/netip"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -271,16 +272,16 @@ func cooldownUntil(input alloc.Input, released map[netip.Prefix]time.Time) strin
 	expiries = slices.CompactFunc(expiries, time.Time.Equal)
 	input.CooldownMode = alloc.CooldownStrict
 
-	var until time.Time
+	// Strict availability is monotonic as records expire: subtraction only
+	// removes cooling ranges, so the first successful selection can be searched.
+	first := sort.Search(len(expiries), func(index int) bool {
+		input.Cooling = coolingPrefixes(released, expiries[index])
 
-	for _, expiry := range expiries {
-		until = expiry
-		input.Cooling = coolingPrefixes(released, expiry)
+		_, err := alloc.Select(input)
 
-		if _, err := alloc.Select(input); err == nil {
-			break
-		}
-	}
+		return err == nil
+	})
+	until := expiries[first]
 
 	if until.Nanosecond() != 0 {
 		until = until.Truncate(time.Second).Add(time.Second)
