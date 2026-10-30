@@ -451,13 +451,18 @@ A cooldown holds a released CIDR back for a while, so that a stale reference
 (a DNS record, a firewall rule) doesn't hit a new owner straight away. There
 are two modes:
 
-- `strict` never hands out space that's still cooling. That's a guarantee,
-  and it means an allocation can be refused while the pool has free space.
+- `strict` never hands out space that's still cooling for `next` requests.
+  That guarantee means a `next` allocation can be refused while the pool has
+  free space.
   The refusal is `ErrPoolExhausted` (exit 5) with reason `cooldown`, and the
   message names the time when cooling space becomes usable.
 - `fit-aware` avoids cooling space only when an equally tight free block
   exists. It costs nothing in fragmentation, but the delay is weak: when the
   only good fit is cooling, it's reused.
+
+Explicit CIDR requests bypass cooldown in both modes, including `strict`.
+They still require containment in the pool and no overlap with live
+allocations; they can intentionally reserve a range that is still cooling.
 
 A strict refusal from the CLI:
 

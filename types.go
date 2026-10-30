@@ -38,15 +38,18 @@ type CooldownMode string
 const (
 	// CooldownNone reuses released CIDRs immediately.
 	CooldownNone CooldownMode = ""
-	// CooldownStrict never returns a CIDR overlapping an unexpired release.
+	// CooldownStrict never returns a RequestNext CIDR overlapping an unexpired
+	// release. Explicit CIDR requests bypass cooldown, including strict mode.
 	CooldownStrict CooldownMode = "strict"
 	// CooldownFitAware avoids cooling ranges only when an equally tight block exists.
 	CooldownFitAware CooldownMode = "fit-aware"
 )
 
-// Cooldown configures how long released CIDRs are held back. Mode is
-// CooldownNone exactly when Duration is zero; otherwise Duration is a whole
-// number of seconds between 1s and 8760h.
+// Cooldown configures how long released CIDRs are held back for RequestNext.
+// Explicit CIDR requests bypass cooldown in every mode, including strict,
+// while still requiring containment and no overlap with live allocations.
+// Mode is CooldownNone exactly when Duration is zero; otherwise Duration is
+// a whole number of seconds between 1s and 8760h.
 type Cooldown struct {
 	Mode     CooldownMode
 	Duration time.Duration

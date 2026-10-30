@@ -415,7 +415,9 @@ func (p *policyFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&p.cooldown, "cooldown", "",
 		"hold released CIDRs back for this duration, e.g. 1h (whole seconds, 1s to 8760h); needs --cooldown-mode")
 	cmd.Flags().StringVar(&p.cooldownMode, "cooldown-mode", "",
-		"cooldown mode: strict (never reuse a cooling range) or fit-aware (avoid cooling ranges when an equally tight block exists); needs --cooldown")
+		"cooldown mode for next requests: strict (never reuse a cooling range) or fit-aware "+
+			"(avoid cooling ranges when an equally tight block exists); explicit CIDR requests bypass "+
+			"cooldown in both modes, including strict; needs --cooldown")
 }
 
 // parseStrategy returns the strategy given with --strategy, or the library
