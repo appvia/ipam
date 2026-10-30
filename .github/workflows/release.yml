@@ -3,8 +3,8 @@
 
 name: Release
 
-# Builds the ipam CLI with goreleaser and creates a draft GitHub release when a
-# v* tag is pushed. Review and publish the draft by hand.
+# Builds the ipam CLI with goreleaser and publishes a GitHub release when a
+# v* tag is pushed.
 on:
   push:
     tags:

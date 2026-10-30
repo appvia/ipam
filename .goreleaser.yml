@@ -41,7 +41,7 @@ release:
   github:
     owner: appvia
     name: ipam
-  draft: true
+  draft: false
 changelog:
   sort: asc
   filters:

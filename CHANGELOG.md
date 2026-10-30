@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow publishes the GitHub release when a `v*` tag is pushed,
+  instead of creating a draft.
+
 ## [0.1.0] - 2026-10-30
 
 ### Added
