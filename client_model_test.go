@@ -165,6 +165,15 @@ func (store *lifecycleCooldownStore) assertInvariants(t *testing.T) {
 	}
 }
 
+// failed reports whether a violation has been recorded. Worker goroutines use
+// it to stop early; only the test goroutine may call t.Fatalf via assertInvariants.
+func (store *lifecycleCooldownStore) failed() bool {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	return len(store.failures) != 0
+}
+
 var lifecyclePolicies = []PoolPolicy{
 	{Strategy: StrategyBestFit, Cooldown: Cooldown{Mode: CooldownStrict, Duration: 30 * time.Minute}},
 	{Strategy: StrategyLowest},
@@ -608,7 +617,9 @@ func runLifecycleStress(t *testing.T, seed int64, base storage.Storage, disableL
 					}
 				}
 
-				audit.assertInvariants(t)
+				if audit.failed() {
+					return
+				}
 			}
 		}()
 	}
