@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
 - `ipam doctor` reports Azure blob versioning as unknown, not off, when no
   reservations document carries a version id, because documents written before
   versioning was enabled have none until they are overwritten.
+- `Client.Close` releases the directory handle a local store holds open, and the
+  CLI closes what it opens. Windows cannot delete a directory that is still open.
+- Windows support: `file:///C:/dir` URLs name a Windows drive path, and the
+  test suite runs on Linux, macOS and Windows in CI.
 - Release workflow: a `v*` tag builds the CLI with goreleaser and creates a
   draft GitHub release.
 - `scripts/license-headers.sh` and the `license-headers` make targets add and
