@@ -395,9 +395,11 @@ because probing that would delete data. It only covers conditional writes.
 
 Upgrade every client that reads the bucket (library users, the CLI, the
 Terraform provider) before you create a pool with a strategy other than
-`lowest` or with a cooldown. Until then, create pools with
-`--strategy lowest` and no cooldown: their documents stay v1, and older
-clients keep working with them.
+`lowest` or with a cooldown, and before you switch an existing pool to one
+with `pool update` (or `UpdatePoolPolicy`): setting `--strategy best-fit` or a
+cooldown rewrites that pool's document as v2 on the same write. Until then,
+create and keep pools on `--strategy lowest` with no cooldown: their documents
+stay v1, and older clients keep working with them.
 
 This matters because the default `best-fit` strategy writes a v2 pool
 document, and older clients refuse v2:
@@ -496,7 +498,8 @@ short where you can, for two reasons:
   that document bigger, and every write to the pool rewrites it.
 - Release and expiry times come from the clock of the client that writes the
   document. Clock skew between clients shifts when cooling space becomes
-  usable.
+  usable, and the release record's expiry is computed before the release is
+  written, so a slow write uses up part of the cooldown.
 
 `ipam pool update <id> --no-cooldown` turns the cooldown off and drops every
 release record.
@@ -522,7 +525,9 @@ against how many would fit if the free space were packed (capacity), and the
 fragmentation index. With `-o json` the same numbers are in `stats`:
 `utilization`, `total`, `free`, `allocatable`, `capacity`,
 `fragmentation_index`, `largest_free`, `free_blocks`, `reference_length`,
-`strategy` and `cooldown`.
+`strategy` and `cooldown`. `fragmentation_index` is rounded to two decimals;
+the row's `status` is computed from the exact value, so use `status` rather
+than re-applying the 0.5 threshold to the rounded index.
 
 Free space, allocatable, capacity and the fragmentation index ignore cooling
 ranges: they measure fragmentation, not immediate availability under cooldown.
