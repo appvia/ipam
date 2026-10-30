@@ -98,6 +98,12 @@ func New(dir string) (*Store, error) {
 	return store, nil
 }
 
+// Close releases the directory handle. The Store must not be used afterwards.
+// Windows cannot delete a directory while the Store still holds it open.
+func (s *Store) Close() error {
+	return s.root.Close()
+}
+
 // Get returns the content and version of key.
 func (s *Store) Get(ctx context.Context, key string) ([]byte, storage.Version, error) {
 	if err := validateKey(key); err != nil {

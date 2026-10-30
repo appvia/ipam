@@ -45,9 +45,12 @@ func TestAcquireRetriesWhenLockFileReplacedBeforeLocking(t *testing.T) {
 
 	t.Cleanup(func() { testHookAfterOpen = nil })
 
-	if _, err := New(dir); err != nil {
+	store, err := New(dir)
+	if err != nil {
 		t.Fatalf("New() error = %v, want the replaced lock to be retried", err)
 	}
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	if calls != 2 {
 		t.Fatalf("lock opened %d times, want 2 (replaced file detected and retried)", calls)

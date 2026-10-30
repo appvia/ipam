@@ -47,6 +47,8 @@ func newStore(t *testing.T) *local.Store {
 		t.Fatalf("New() error = %v", err)
 	}
 
+	t.Cleanup(func() { _ = store.Close() })
+
 	return store
 }
 
@@ -98,6 +100,8 @@ func TestStoredFileIsPlainContentAtPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Cleanup(func() { _ = store.Close() })
+
 	content := []byte(`{"hello":"world"}`)
 
 	version, err := store.CreateIfAbsent(t.Context(), "pools/prod.json", content)
@@ -133,6 +137,8 @@ func TestStaleStateIsIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	version, err := store.CreateIfAbsent(t.Context(), "pools/b.json", []byte("b"))
 	if err != nil {
@@ -215,6 +221,8 @@ func TestSymlinkEscapeIsBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Cleanup(func() { _ = store.Close() })
+
 	ctx := t.Context()
 
 	if data, _, err := store.Get(ctx, "link/secret"); err == nil {
@@ -265,6 +273,8 @@ func TestPermissionDeniedMapsToAccessDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Cleanup(func() { _ = store.Close() })
+
 	if _, err := store.CreateIfAbsent(t.Context(), "locked/obj", []byte("x")); err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +304,8 @@ func TestCrossProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	if _, err := store.CreateIfAbsent(t.Context(), counterKey, []byte("0")); err != nil {
 		t.Fatal(err)
@@ -346,6 +358,8 @@ func runChild(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 
+	t.Cleanup(func() { _ = store.Close() })
+
 	ctx := t.Context()
 	deadline := time.Now().Add(time.Minute)
 
@@ -387,6 +401,8 @@ func TestFirstOperationsOnFreshDirectoryDoNotFail(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		t.Cleanup(func() { _ = store.Close() })
 
 		if err := os.Remove(filepath.Join(dir, ".lock")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
@@ -434,6 +450,8 @@ func TestMissingLockFileIsTolerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	lockPath := filepath.Join(dir, ".lock")
 	ctx := t.Context()
@@ -487,6 +505,8 @@ func TestEscapeAndOverlongKeysAreInvalidKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	ctx := t.Context()
 
@@ -570,6 +590,8 @@ func runFreshChild(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+
+	t.Cleanup(func() { _ = store.Close() })
 
 	_, err = store.CreateIfAbsent(t.Context(), "k", []byte(strconv.Itoa(os.Getpid())))
 
