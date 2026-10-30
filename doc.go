@@ -27,4 +27,15 @@
 // only safe when no CreatePool for that child can still be running: a creator
 // between committing the carve-out and writing the child's reservations
 // document cannot be detected, and would publish the child on released space.
+//
+// Each document chooses its schema version independently on every write. The
+// pool document stores the allocation strategy: it is v1 when the strategy is
+// lowest and v2 (with a strategy field) otherwise, so new pools, which default
+// to best-fit, are v2. The reservations document stores the cooldown and the
+// release records, a map from each released CIDR to its cooldown expiry taken
+// from the writing client's clock; it is v1 when there is no cooldown and no
+// release record, and v2 otherwise. Expired records are pruned on write.
+// UpdatePoolPolicy writes the pool document and then the reservations document;
+// the two writes are not atomic, and repeating the call completes a partial
+// update.
 package ipam

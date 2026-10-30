@@ -28,7 +28,10 @@ Changing a code or the mapping order in `exitCode` is a breaking change; update 
 ## CONVENTIONS
 - Every command body is wrapped in `c.leaf(...)`: it sets `started`, so errors are classified by cause; anything failing before that (cobra args, flags, unknown command) exits 2.
 - `SilenceErrors/SilenceUsage` are on; `runCLI` prints one `ipam: <msg>` line to stderr (prefix added once), plus a help hint only for exit 2.
-- Openers are injected (`openFunc`, `openStorageFunc`) so tests use `mem://`/fakes; `doctor` uses the raw `ipam.OpenStorage`, not a Client.
+- Openers are injected (`openFunc`, `openStorageFunc`) so tests use `mem://`/fakes; `doctor` uses the raw `ipam.OpenStorage` for its probes and also builds a Client over it for fragmentation statistics (`PoolStats`).
+- Policy flags: `--strategy best-fit|lowest` and `--cooldown D --cooldown-mode strict|fit-aware` (passed together) on `pool create`/`pool update`; `--no-cooldown` on `pool update` only. `pool update` writes the policy first, then metadata; a metadata failure leaves the policy applied and a re-run completes it.
+- `pool list` prints `ipam: warning: skipped pools with an unsupported schema ...` on stderr for an `*ipam.UnsupportedPoolsError` and exits 0.
+- Pool JSON: `strategy` always, `cooldown {mode,duration}` omitted when none.
 - `version` needs no backend; `-ldflags "-X main.version=..."` sets it (`make build`).
 - Empty lists render as JSON `[]`, not `null` (`TestEmptyListsAreJSONArrays`).
 - Supplied allocation `--id` makes `alloc create` idempotent.
@@ -38,6 +41,7 @@ Changing a code or the mapping order in `exitCode` is a breaking change; update 
 - Must never create, delete or change data. Checks: backend reachability, data protection (`storage.Inspector`; Unknown -> WARN), hierarchical namespace (FAIL), and a per-pool write probe.
 - The write probe re-writes an existing reservations document with its own bytes under a version that can never match, and classifies precondition-failed / access-denied / success. Any change to the probe version must stay unmatchable on every backend AND be one Azure evaluates past its If-Match syntax check; read the comment in `doctor.go` before touching it.
 - `--expect-write` / `--expect-no-write POOL` turn a pool's probe into a PASS/FAIL assertion (grant verification).
+- `fragmentation` check per pool: read-only, never FAIL; WARN when index >= 0.5 and capacity >= 4 or stats unavailable (error class only, never error text). A WARN makes the overall result `warn`, exit 0.
 - Cannot detect a backend ignoring conditional DELETE (probing would delete data).
 
 ## ANTI-PATTERNS

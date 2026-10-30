@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Per-pool allocation strategy: `best-fit` (smallest free block that fits) or
+  `lowest` (lowest free address). CLI: `--strategy` on `pool create` and
+  `pool update`.
+- Per-pool cooldown for released CIDRs, in `strict` or `fit-aware` mode, up to
+  `8760h` in whole seconds. A strict refusal is `ErrPoolExhausted` with reason
+  `cooldown` and names the time cooling space becomes usable. CLI:
+  `--cooldown` with `--cooldown-mode`, and `--no-cooldown` on `pool update`.
+- `Client.UpdatePoolPolicy` and `Client.PoolStats`.
+- `ipam doctor` reports a read-only `fragmentation` check per pool, with
+  statistics in the JSON output. It WARNs when the fragmentation index is at
+  least 0.5 and the capacity at least 4, and never FAILs.
+- Pool output has `STRATEGY` and `COOLDOWN` columns; JSON always has
+  `strategy` and has `cooldown` only when one is set.
+- README sections on upgrading and on allocation strategy and fragmentation.
+
+### Changed
+
+- New pools default to `best-fit`, which writes a v2 pool document. A cooldown
+  or release records make the reservations document v2. Pools with `lowest` and
+  no cooldown, including all existing pools, keep their v1 documents.
+- Upgrade every client (library, CLI, Terraform provider) before creating a
+  pool with a non-`lowest` strategy or a cooldown: older clients refuse v2
+  documents.
+- `ListPools` skips pools with an unsupported schema and returns the readable
+  pools together with an `*UnsupportedPoolsError`. `ipam pool list` prints a
+  warning on stderr and exits 0.
+- `ipam doctor`'s overall result can now be WARN because of fragmentation; it
+  still exits 0.
+
 ## [0.2.0] - 2026-10-30
 
 ### Changed
