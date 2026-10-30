@@ -65,7 +65,9 @@ Centrality unmeasured (gopls not used); roles from source.
 make build              # go build -ldflags "-X main.version=$(VERSION)" -o ipam ./cmd/ipam
 make test               # go test ./... -count=1 -race -timeout 20m
 make test-integration   # go test -tags integration ./... -count=1 (needs emulators/env)
-make lint               # golangci-lint run
+make lint               # golangci-lint run + scripts/license-headers.sh --check
+make license-headers    # add missing Copyright/SPDX headers to tracked files (.go .sh .tf .yml .yaml .toml Makefile .gitignore)
+make test-scripts       # scenario tests for scripts/license-headers.sh
 go test -run Example .
 GATE_SEEDS=200 go test -run 'TestLifecycleStressMemory' -race .   # memory stress seeds (default 20; GATE_OFFSET shifts)
 GATE_LOCAL_SEEDS=10 go test -run TestLifecycleStressLocal -race . # local seeds (default 3; GATE_LOCAL_START)
@@ -73,8 +75,8 @@ GATE_CREATE_ITERATIONS=1000 go test -run TestCreatePoolRaceLocalLoop .
 ```
 
 ## NOTES
-- CI (`.github/workflows/test.yml`): `make test` + golangci-lint v2.14.0 on ubuntu; `go test ./storage/local/...` on windows; emulators + probe + `make test-integration`.
-- `.golangci.yml` mentions `scripts/license-headers.sh`, which does not exist; add headers by hand.
+- CI (`.github/workflows/test.yml`): `make test` + golangci-lint v2.14.0 + license header check on ubuntu; `go test ./storage/local/...` on windows; emulators + probe + `make test-integration`.
+- Headers: `scripts/license-headers.sh` adds/checks the Apache-2.0 header on non-Go files too (CI step `License headers`); golangci `goheader` enforces Go files. `testdata/`, `docs/` and `templates/` are skipped.
 - Cross-process tests re-exec the test binary via `IPAM_CROSS_PROCESS_WORKER`/`IPAM_CROSS_PROCESS_DIRECTORY` (root) and `IPAM_LOCAL_CROSS_PROCESS_DIR`/`IPAM_LOCAL_FRESH_DIR` (storage/local); do not set them by hand.
 - `.omo/` and `.codegraph/` are gitignored tooling state; the probe writes `.omo/evidence/emulators.json`.
 - `client_attempt*_test.go`, `client_gate_regression_test.go` are regression suites for past races; keep them when refactoring.

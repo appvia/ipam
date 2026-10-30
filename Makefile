@@ -4,7 +4,7 @@
 BINARY := ipam
 VERSION ?= dev
 
-.PHONY: build test test-integration lint
+.PHONY: build test test-integration lint license-headers check-license-headers test-scripts
 
 build:
 	go build -ldflags "-X main.version=$(VERSION)" -o $(BINARY) ./cmd/ipam
@@ -17,3 +17,13 @@ test-integration:
 
 lint:
 	golangci-lint run
+	./scripts/license-headers.sh --check
+
+license-headers:
+	./scripts/license-headers.sh
+
+check-license-headers:
+	./scripts/license-headers.sh --check
+
+test-scripts:
+	./scripts/test-license-headers.sh
