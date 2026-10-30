@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"net/netip"
 	"time"
 
@@ -199,4 +200,171 @@ func ExampleWithMaxAttempts() {
 
 	fmt.Println(pool.Family, allocation.CIDR)
 	// Output: 6 fd00::/64
+}
+
+// Both pools hold the same used block, 10.0.0.128/26. The lowest pool takes
+// the bottom free run; best fit takes the tight /26 hole at the top.
+func ExampleClient_CreatePool_bestFit() {
+	ctx := context.Background()
+	client := ipam.New(memory.New())
+
+	pools := []struct {
+		id     string
+		policy ipam.PoolPolicy
+	}{
+		{"lowest", ipam.PoolPolicy{Strategy: ipam.StrategyLowest}},
+		{"best", ipam.PoolPolicy{Strategy: ipam.StrategyBestFit}},
+	}
+
+	for _, p := range pools {
+		pool, err := client.CreatePool(ctx, ipam.PoolSpec{
+			ID:     p.id,
+			CIDRs:  []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")},
+			Policy: p.policy,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if _, err := client.Allocate(ctx, pool.ID, ipam.AllocationSpec{CIDR: netip.MustParsePrefix("10.0.0.128/26")}); err != nil {
+			log.Fatal(err)
+		}
+
+		next, err := client.Allocate(ctx, pool.ID, ipam.AllocationSpec{PrefixLength: 26})
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Println(pool.ID, pool.Policy.Strategy, next.CIDR)
+	}
+	// Output:
+	// lowest lowest 10.0.0.0/26
+	// best best-fit 10.0.0.192/26
+}
+
+// A released CIDR is held back for the strict cooldown. The fake clock makes
+// the refusal and the expiry deterministic.
+func ExampleClient_Release_cooldown() {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	client := ipam.New(memory.New(), ipam.WithClock(func() time.Time { return now }))
+
+	if _, err := client.CreatePool(ctx, ipam.PoolSpec{
+		ID:    "small",
+		CIDRs: []netip.Prefix{netip.MustParsePrefix("192.168.0.0/24")},
+		Policy: ipam.PoolPolicy{
+			Cooldown: ipam.Cooldown{Mode: ipam.CooldownStrict, Duration: time.Hour},
+		},
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	first, err := client.Allocate(ctx, "small", ipam.AllocationSpec{PrefixLength: 24})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := client.Release(ctx, "small", first.ID); err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = client.Allocate(ctx, "small", ipam.AllocationSpec{PrefixLength: 24})
+
+	var opErr *ipam.OpError
+	if !errors.As(err, &opErr) {
+		log.Fatal(err)
+	}
+
+	fmt.Println(errors.Is(err, ipam.ErrPoolExhausted), opErr.Reason)
+
+	now = now.Add(time.Hour)
+
+	reused, err := client.Allocate(ctx, "small", ipam.AllocationSpec{PrefixLength: 24})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(reused.CIDR)
+	// Output:
+	// true cooldown
+	// 192.168.0.0/24
+}
+
+func ExampleClient_UpdatePoolPolicy() {
+	ctx := context.Background()
+	client := ipam.New(memory.New())
+
+	if _, err := client.CreatePool(ctx, ipam.PoolSpec{
+		ID:    "edge",
+		CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")},
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := client.UpdatePoolPolicy(ctx, "edge", ipam.PoolPolicy{
+		Strategy: ipam.StrategyLowest,
+		Cooldown: ipam.Cooldown{Mode: ipam.CooldownFitAware, Duration: 30 * time.Minute},
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	stats, err := client.PoolStats(ctx, "edge", 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("strategy=%s cooldown=%q %s\n", stats.Policy.Strategy, stats.Policy.Cooldown.Mode, stats.Policy.Cooldown.Duration)
+
+	// Omitting the cooldown removes it; the change applies to the next allocation.
+	if err := client.UpdatePoolPolicy(ctx, "edge", ipam.PoolPolicy{Strategy: ipam.StrategyLowest}); err != nil {
+		log.Fatal(err)
+	}
+
+	stats, err = client.PoolStats(ctx, "edge", 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("strategy=%s cooldown=%q %s\n", stats.Policy.Strategy, stats.Policy.Cooldown.Mode, stats.Policy.Cooldown.Duration)
+	// Output:
+	// strategy=lowest cooldown="fit-aware" 30m0s
+	// strategy=lowest cooldown="" 0s
+}
+
+// Two used blocks leave 256 free addresses split into two /25 runs, so no /24
+// fits: the pool is half used, and the free space is fragmented.
+func ExampleClient_PoolStats() {
+	ctx := context.Background()
+	client := ipam.New(memory.New())
+
+	if _, err := client.CreatePool(ctx, ipam.PoolSpec{
+		ID:    "prod",
+		CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/23")},
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	for _, cidr := range []string{"10.0.0.0/25", "10.0.1.128/25"} {
+		if _, err := client.Allocate(ctx, "prod", ipam.AllocationSpec{CIDR: netip.MustParsePrefix(cidr)}); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	stats, err := client.PoolStats(ctx, "prod", 24)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	used := new(big.Int).Sub(stats.Total, stats.Free)
+	utilisation := new(big.Rat).SetFrac(used, stats.Total)
+
+	fmt.Println("utilisation", utilisation.FloatString(2))
+	fmt.Println("largest free", stats.Largest)
+	fmt.Println("allocatable /24", stats.Allocatable)
+	fmt.Println("fragmentation index", stats.FragmentationIndex.FloatString(2))
+	// Output:
+	// utilisation 0.50
+	// largest free 10.0.0.128/25
+	// allocatable /24 0
+	// fragmentation index 1.00
 }
