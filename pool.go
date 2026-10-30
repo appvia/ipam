@@ -742,7 +742,8 @@ func (client *Client) UpdatePoolMetadata(
 // the returned error says so and the pool holds the new strategy with the old
 // cooldown; calling UpdatePoolPolicy again with the same policy completes it.
 // Documents of another incarnation are never rewritten: such a pool reports
-// Reason pool_incomplete after the retries, and an absent pool is ErrNotFound.
+// Reason pool_incomplete, and an absent pool is ErrNotFound. Both phases and
+// their retries are pinned to the incarnation from the first read.
 func (client *Client) UpdatePoolPolicy(ctx context.Context, poolID string, policy PoolPolicy) error {
 	if err := validateClient(client); err != nil {
 		return err
@@ -756,12 +757,22 @@ func (client *Client) UpdatePoolPolicy(ctx context.Context, poolID string, polic
 		return &OpError{Op: "update pool policy", Pool: poolID, Err: err}
 	}
 
-	strategyWritten, err := client.updatePoolStrategy(ctx, poolID, policy.Strategy)
+	data, _, err := client.store.Get(ctx, poolKey(poolID))
+	if err != nil {
+		return mapStorageError("update pool policy", poolID, "", err)
+	}
+
+	pool, err := decodePoolDocument(data, poolID)
 	if err != nil {
 		return err
 	}
 
-	if err := client.updatePoolCooldown(ctx, poolID, policy.Cooldown); err != nil {
+	strategyWritten, err := client.updatePoolStrategy(ctx, poolID, pool.Incarnation, policy.Strategy)
+	if err != nil {
+		return err
+	}
+
+	if err := client.updatePoolCooldown(ctx, poolID, pool.Incarnation, policy.Cooldown); err != nil {
 		if strategyWritten {
 			return fmt.Errorf("strategy applied but cooldown not applied, retry to complete: %w", err)
 		}
@@ -775,7 +786,9 @@ func (client *Client) UpdatePoolPolicy(ctx context.Context, poolID string, polic
 // readUsableDocuments reads both documents of a pool. An absent pool document
 // is ErrNotFound; a reservations document that is absent or of another
 // incarnation yields the retryable incarnation_mismatch conflict.
-func (client *Client) readUsableDocuments(ctx context.Context, op, poolID string) (poolDocuments, error) {
+func (client *Client) readUsableDocuments(
+	ctx context.Context, op, poolID, incarnation string,
+) (poolDocuments, error) {
 	documents, err := client.readPoolDocuments(ctx, poolID)
 	if err != nil {
 		return poolDocuments{}, err
@@ -783,6 +796,13 @@ func (client *Client) readUsableDocuments(ctx context.Context, op, poolID string
 
 	if documents.pool == nil {
 		return poolDocuments{}, &OpError{Op: op, Pool: poolID, Err: ErrNotFound}
+	}
+
+	if documents.pool.Incarnation != incarnation {
+		return poolDocuments{}, &OpError{
+			Op: op, Pool: poolID, Reason: "pool_incomplete",
+			Err: fmt.Errorf("pool incarnation changed during policy update: %w", ErrNotFound),
+		}
 	}
 
 	if !documents.usable() {
@@ -809,13 +829,13 @@ func (client *Client) retryPolicyWrite(ctx context.Context, poolID string, attem
 // this call's write (or a write it observed landing), not because it already did.
 func (client *Client) updatePoolStrategy(
 	ctx context.Context,
-	poolID string,
+	poolID, incarnation string,
 	strategy AllocationStrategy,
 ) (bool, error) {
 	const op = "update pool policy"
 
 	for attempt := 1; ; attempt++ {
-		documents, err := client.readUsableDocuments(ctx, op, poolID)
+		documents, err := client.readUsableDocuments(ctx, op, poolID, incarnation)
 		if err == nil {
 			if documents.pool.Policy.Strategy == strategy {
 				return false, nil
@@ -859,11 +879,13 @@ func (client *Client) updatePoolStrategy(
 	}
 }
 
-func (client *Client) updatePoolCooldown(ctx context.Context, poolID string, cooldown Cooldown) error {
+func (client *Client) updatePoolCooldown(
+	ctx context.Context, poolID, incarnation string, cooldown Cooldown,
+) error {
 	const op = "update pool policy"
 
 	for attempt := 1; ; attempt++ {
-		documents, err := client.readUsableDocuments(ctx, op, poolID)
+		documents, err := client.readUsableDocuments(ctx, op, poolID, incarnation)
 		if err == nil {
 			if documents.reservations.Cooldown == cooldown {
 				return nil
