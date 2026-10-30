@@ -584,7 +584,10 @@ func (client *Client) GetPool(ctx context.Context, poolID string) (Pool, error) 
 	return documents.publicPool(), nil
 }
 
-// ListPools returns all pool definitions sorted by ID.
+// ListPools returns the readable pool definitions sorted by ID. A pool whose
+// documents use an unsupported schema version is skipped and named in a
+// non-nil *UnsupportedPoolsError, which comes with the valid partial result.
+// Any other error aborts the listing.
 func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 	if err := validateClient(client); err != nil {
 		return nil, err
@@ -596,6 +599,9 @@ func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 	}
 
 	pools := make([]Pool, 0, len(keys))
+
+	var unsupported []string
+
 	for _, key := range keys {
 		poolID, ok := idFromKey(key, poolsPrefix)
 		if !ok {
@@ -607,6 +613,12 @@ func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 			continue
 		}
 
+		if errors.Is(getErr, ErrUnsupportedSchema) {
+			unsupported = append(unsupported, poolID)
+
+			continue
+		}
+
 		if getErr != nil {
 			return nil, getErr
 		}
@@ -615,6 +627,12 @@ func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 	}
 
 	slices.SortFunc(pools, func(left, right Pool) int { return strings.Compare(left.ID, right.ID) })
+
+	if len(unsupported) > 0 {
+		slices.Sort(unsupported)
+
+		return pools, &UnsupportedPoolsError{PoolIDs: unsupported}
+	}
 
 	return pools, nil
 }
