@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/appvia/ipam"
 	"github.com/appvia/ipam/storage"
 )
 
@@ -31,6 +33,18 @@ Checks:
                           conditional writes (FAIL; the bytes were identical,
                           so the content is unchanged). A pool whose document
                           cannot be read is a WARN and is not written to.
+  fragmentation           per pool: utilisation, free space, largest free block,
+                          free blocks by prefix length and, for the pool's most
+                          requested prefix length, how much of the free space is
+                          allocatable and the fragmentation index. Read-only.
+                          These metrics ignore cooling ranges; strict cooldown
+                          may refuse even when allocatable > 0. Active cooling
+                          ranges are counted separately as "cooling N".
+                          WARN when the index is >= 0.5 and at least 4 such
+                          prefixes would fit if the free space were packed, or
+                          when the statistics cannot be read (not found,
+                          unsupported schema or read error). Never FAIL; a WARN
+                          makes the overall result WARN and the exit code stays 0.
 
 --expect-write and --expect-no-write turn the write probe of a pool into an
 assertion. Doctor never creates, deletes or modifies data. It cannot detect a
@@ -54,11 +68,40 @@ const (
 )
 
 type checkResult struct {
-	Check  string `json:"check"`
-	Pool   string `json:"pool,omitempty"`
-	Status string `json:"status"`
-	Detail string `json:"detail"`
+	Check  string             `json:"check"`
+	Pool   string             `json:"pool,omitempty"`
+	Status string             `json:"status"`
+	Detail string             `json:"detail"`
+	Stats  *fragmentationJSON `json:"stats,omitempty"`
 }
+
+// fragmentationJSON is the machine-readable form of a fragmentation check.
+// Numbers are decimal strings; allocatable, capacity and fragmentation_index
+// are empty when the pool has no reference prefix length.
+type fragmentationJSON struct {
+	Utilization        string          `json:"utilization"`
+	Total              string          `json:"total"`
+	Free               string          `json:"free"`
+	Allocatable        string          `json:"allocatable"`
+	Capacity           string          `json:"capacity"`
+	FragmentationIndex string          `json:"fragmentation_index"`
+	LargestFree        string          `json:"largest_free"`
+	FreeBlocks         []freeBlockJSON `json:"free_blocks"`
+	ReferenceLength    int             `json:"reference_length"`
+	Strategy           string          `json:"strategy"`
+	Cooldown           string          `json:"cooldown"`
+}
+
+type freeBlockJSON struct {
+	PrefixLength int `json:"prefix_length"`
+	Count        int `json:"count"`
+}
+
+const (
+	// fragmentationMinCapacity is the smallest capacity for which a high
+	// fragmentation index (>= 1/2) is a WARN.
+	fragmentationMinCapacity = 4
+)
 
 type doctorReport struct {
 	Result string        `json:"result"`
@@ -168,6 +211,12 @@ func diagnose(ctx context.Context, store storage.Storage, fileBackend bool, expe
 	for _, id := range pools {
 		expectation, expected := expectations[id]
 		report.add(probeWrite(ctx, store, id, expectation, expected))
+	}
+
+	client := ipam.New(store)
+
+	for _, id := range pools {
+		report.add(checkFragmentation(ctx, client, id))
 	}
 
 	return report.finish()
@@ -310,6 +359,124 @@ func probeWrite(ctx context.Context, store storage.Storage, pool string, wantWri
 	}
 
 	return result
+}
+
+// checkFragmentation reports a pool's free-space statistics. It only reads and
+// never FAILs: unavailable statistics are a WARN naming the error class, not
+// the underlying error text, which could carry a URL.
+func checkFragmentation(ctx context.Context, client *ipam.Client, pool string) checkResult {
+	result := checkResult{Check: "fragmentation", Pool: pool, Status: statusWarn}
+
+	stats, err := client.PoolStats(ctx, pool, 0)
+	if err != nil {
+		class := "read error"
+
+		switch {
+		case errors.Is(err, ipam.ErrNotFound):
+			class = "not found"
+		case errors.Is(err, ipam.ErrUnsupportedSchema):
+			class = "unsupported schema"
+		}
+
+		result.Detail = "statistics unavailable: " + class
+
+		return result
+	}
+
+	result.Detail = fragmentationDetail(stats)
+	result.Stats = fragmentationStats(stats)
+
+	result.Status = statusPass
+	if stats.FragmentationIndex != nil && stats.Capacity != nil &&
+		stats.Capacity.Cmp(big.NewInt(fragmentationMinCapacity)) >= 0 &&
+		stats.FragmentationIndex.Cmp(big.NewRat(1, 2)) >= 0 {
+		result.Status = statusWarn
+	}
+
+	return result
+}
+
+func utilization(stats ipam.PoolStats) *big.Rat {
+	if stats.Total.Sign() == 0 {
+		return new(big.Rat)
+	}
+
+	used := new(big.Int).Sub(stats.Total, stats.Free)
+
+	return new(big.Rat).SetFrac(used, stats.Total)
+}
+
+func fragmentationDetail(stats ipam.PoolStats) string {
+	percent := new(big.Rat).Mul(utilization(stats), big.NewRat(100, 1))
+	largest := "none"
+
+	if stats.Largest.IsValid() {
+		largest = fmt.Sprintf("/%d", stats.Largest.Bits())
+	}
+
+	blocks := make([]string, 0, len(stats.Histogram))
+	for _, block := range stats.Histogram {
+		blocks = append(blocks, fmt.Sprintf("/%d:%d", block.PrefixLength, block.Count))
+	}
+
+	if len(blocks) == 0 {
+		blocks = append(blocks, "none")
+	}
+
+	detail := fmt.Sprintf("util %s%%, free %s of %s, largest %s, blocks %s",
+		percent.FloatString(1), stats.Free, stats.Total, largest, strings.Join(blocks, " "))
+
+	if stats.ReferenceLength != 0 && stats.Allocatable != nil && stats.Capacity != nil {
+		detail += fmt.Sprintf(", /%d allocatable %s of %s", stats.ReferenceLength, stats.Allocatable, stats.Capacity)
+
+		if stats.FragmentationIndex != nil {
+			detail += ", index " + stats.FragmentationIndex.FloatString(2)
+		}
+	}
+
+	if stats.Cooling > 0 {
+		detail += fmt.Sprintf(", cooling %d", stats.Cooling)
+	}
+
+	return detail
+}
+
+func fragmentationStats(stats ipam.PoolStats) *fragmentationJSON {
+	out := &fragmentationJSON{
+		Utilization:     utilization(stats).FloatString(4),
+		Total:           stats.Total.String(),
+		Free:            stats.Free.String(),
+		FreeBlocks:      make([]freeBlockJSON, 0, len(stats.Histogram)),
+		ReferenceLength: stats.ReferenceLength,
+		Strategy:        string(stats.Policy.Strategy),
+		Cooldown:        "none",
+	}
+
+	if stats.Largest.IsValid() {
+		out.LargestFree = stats.Largest.String()
+	}
+
+	for _, block := range stats.Histogram {
+		out.FreeBlocks = append(out.FreeBlocks, freeBlockJSON{PrefixLength: block.PrefixLength, Count: block.Count})
+	}
+
+	if stats.Allocatable != nil {
+		out.Allocatable = stats.Allocatable.String()
+	}
+
+	if stats.Capacity != nil {
+		out.Capacity = stats.Capacity.String()
+	}
+
+	if stats.FragmentationIndex != nil {
+		out.FragmentationIndex = stats.FragmentationIndex.FloatString(2)
+	}
+
+	if mode := stats.Policy.Cooldown.Mode; mode != ipam.CooldownNone {
+		out.Cooldown = fmt.Sprintf("%s %s", mode, stats.Policy.Cooldown.Duration)
+	}
+
+	return out
 }
 
 func (r *doctorReport) add(checks ...checkResult) {

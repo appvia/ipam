@@ -241,6 +241,42 @@ func TestCodecGoldenFilesRoundTripByteIdentically(t *testing.T) {
 				return EncodeReservations(decoded)
 			},
 		},
+		{
+			name: "pool v2",
+			file: "pool_v2.json",
+			decode: func(data []byte) ([]byte, error) {
+				decoded, err := DecodePool(data, "prod-main")
+				if err != nil {
+					return nil, err
+				}
+
+				return EncodePool(decoded)
+			},
+		},
+		{
+			name: "reservations v2",
+			file: "reservations_v2.json",
+			decode: func(data []byte) ([]byte, error) {
+				decoded, err := DecodeReservations(data, "prod-main")
+				if err != nil {
+					return nil, err
+				}
+
+				return EncodeReservations(decoded)
+			},
+		},
+		{
+			name: "reservations v2 empty released",
+			file: "reservations_v2_empty_released.json",
+			decode: func(data []byte) ([]byte, error) {
+				decoded, err := DecodeReservations(data, "prod-main")
+				if err != nil {
+					return nil, err
+				}
+
+				return EncodeReservations(decoded)
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -275,9 +311,52 @@ func TestCodecRejectsInvalidEnvelope(t *testing.T) {
 	}{
 		{
 			name:       "unsupported pool schema",
-			data:       `{"schema_version":2,"kind":"pool","pool_id":"prod-main"}`,
+			data:       `{"schema_version":3,"kind":"pool","pool_id":"prod-main"}`,
 			decodePool: true,
 			wantErr:    ErrUnsupportedSchema,
+		},
+		{
+			name:       "v1 pool with strategy",
+			data:       `{"schema_version":1,"kind":"pool","pool_id":"prod-main","strategy":"lowest"}`,
+			decodePool: true,
+			wantErr:    ErrInvalidDocument,
+		},
+		{
+			name:       "v2 pool without strategy",
+			data:       `{"schema_version":2,"kind":"pool","pool_id":"prod-main"}`,
+			decodePool: true,
+			wantErr:    ErrInvalidDocument,
+		},
+		{
+			name:       "v2 pool with empty strategy",
+			data:       `{"schema_version":2,"kind":"pool","pool_id":"prod-main","strategy":""}`,
+			decodePool: true,
+			wantErr:    ErrInvalidDocument,
+		},
+		{
+			name:    "v1 reservations with cooldown",
+			data:    `{"schema_version":1,"kind":"reservations","pool_id":"prod-main","allocations":{},"cooldown":null}`,
+			wantErr: ErrInvalidDocument,
+		},
+		{
+			name:    "v1 reservations with released",
+			data:    `{"schema_version":1,"kind":"reservations","pool_id":"prod-main","allocations":{},"released":{}}`,
+			wantErr: ErrInvalidDocument,
+		},
+		{
+			name:    "v2 reservations with null released",
+			data:    `{"schema_version":2,"kind":"reservations","pool_id":"prod-main","allocations":{},"cooldown":null,"released":null}`,
+			wantErr: ErrInvalidDocument,
+		},
+		{
+			name:    "v2 reservations without released",
+			data:    `{"schema_version":2,"kind":"reservations","pool_id":"prod-main","allocations":{},"cooldown":null}`,
+			wantErr: ErrInvalidDocument,
+		},
+		{
+			name:    "v2 reservations with null allocations",
+			data:    `{"schema_version":2,"kind":"reservations","pool_id":"prod-main","allocations":null,"cooldown":null,"released":{}}`,
+			wantErr: ErrInvalidDocument,
 		},
 		{
 			name:       "missing schema",
@@ -299,7 +378,7 @@ func TestCodecRejectsInvalidEnvelope(t *testing.T) {
 		},
 		{
 			name:    "unsupported reservations schema",
-			data:    `{"schema_version":2,"kind":"reservations","pool_id":"prod-main"}`,
+			data:    `{"schema_version":3,"kind":"reservations","pool_id":"prod-main"}`,
 			wantErr: ErrUnsupportedSchema,
 		},
 		{

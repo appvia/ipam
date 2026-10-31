@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "kind": "reservations",
+  "pool_id": "prod-main",
+  "incarnation": "0123456789abcdef0123456789abcdef",
+  "allocations": {},
+  "cooldown": {
+    "mode": "fit-aware",
+    "seconds": 3600
+  },
+  "released": {}
+}

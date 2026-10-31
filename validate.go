@@ -7,7 +7,53 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"time"
 )
+
+const (
+	minCooldown = time.Second
+	maxCooldown = 8760 * time.Hour
+)
+
+// validatePolicy checks a policy given by a caller. StrategyDefault is
+// accepted only on create, where it resolves to StrategyBestFit.
+func validatePolicy(policy PoolPolicy, forCreate bool) error {
+	switch policy.Strategy {
+	case StrategyLowest, StrategyBestFit:
+	case StrategyDefault:
+		if !forCreate {
+			return fmt.Errorf("policy strategy is required: %w", ErrInvalidArgument)
+		}
+	default:
+		return fmt.Errorf("policy strategy %q is not lowest or best-fit: %w", policy.Strategy, ErrInvalidArgument)
+	}
+
+	return validateCooldown(policy.Cooldown)
+}
+
+func validateCooldown(cooldown Cooldown) error {
+	switch cooldown.Mode {
+	case CooldownNone:
+		if cooldown.Duration != 0 {
+			return fmt.Errorf("cooldown duration requires a cooldown mode: %w", ErrInvalidArgument)
+		}
+
+		return nil
+	case CooldownStrict, CooldownFitAware:
+	default:
+		return fmt.Errorf("cooldown mode %q is not strict or fit-aware: %w", cooldown.Mode, ErrInvalidArgument)
+	}
+
+	if cooldown.Duration%time.Second != 0 {
+		return fmt.Errorf("cooldown duration must be whole seconds: %w", ErrInvalidArgument)
+	}
+
+	if cooldown.Duration < minCooldown || cooldown.Duration > maxCooldown {
+		return fmt.Errorf("cooldown duration must be between 1s and 8760h: %w", ErrInvalidArgument)
+	}
+
+	return nil
+}
 
 func validate(pool poolDocument, reservations reservationsDocument) error {
 	canonical, err := canonicalPool(pool.Pool)

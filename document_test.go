@@ -20,6 +20,7 @@ func TestCodecRootDocumentsRoundTrip(t *testing.T) {
 			CIDRs:       []netip.Prefix{netip.MustParsePrefix("10.0.0.0/16")},
 			Description: "production",
 			Labels:      map[string]string{"team": "platform"},
+			Policy:      PoolPolicy{Strategy: StrategyLowest},
 		},
 		Incarnation: "0123456789abcdef0123456789abcdef",
 	}
@@ -75,7 +76,7 @@ func TestCodecRootMapsUnsupportedSchema(t *testing.T) {
 	t.Parallel()
 
 	_, err := decodePoolDocument(
-		[]byte(`{"schema_version":2,"kind":"pool","pool_id":"prod-main"}`),
+		[]byte(`{"schema_version":3,"kind":"pool","pool_id":"prod-main"}`),
 		"prod-main",
 	)
 	if !errors.Is(err, ErrUnsupportedSchema) {

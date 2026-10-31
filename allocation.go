@@ -10,7 +10,9 @@ import (
 	"maps"
 	"net/netip"
 	"slices"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/appvia/ipam/internal/alloc"
 	"github.com/appvia/ipam/storage"
@@ -135,6 +137,9 @@ func (client *Client) allocateAttempt(
 		}
 	}
 
+	now := client.clock().UTC()
+	pruneReleased(&reservations, now)
+
 	used := make([]netip.Prefix, 0, len(reservations.Allocations))
 	for _, allocation := range reservations.Allocations {
 		used = append(used, allocation.CIDR)
@@ -144,7 +149,34 @@ func (client *Client) allocateAttempt(
 
 	switch request.Kind {
 	case RequestNext:
-		cidr, err = alloc.Next(pool.CIDRs, used, request.PrefixLength)
+		input := alloc.Input{
+			Parents: pool.CIDRs, Used: used, Length: request.PrefixLength,
+		}
+		if pool.Policy.Strategy == StrategyBestFit {
+			input.Strategy = alloc.StrategyBestFit
+		}
+
+		switch reservations.Cooldown.Mode {
+		case CooldownNone:
+		case CooldownStrict:
+			input.CooldownMode = alloc.CooldownStrict
+		case CooldownFitAware:
+			input.CooldownMode = alloc.CooldownFitAware
+		}
+
+		if reservations.Cooldown.Mode != CooldownNone {
+			input.Cooling = coolingPrefixes(reservations.Released, now)
+		}
+
+		cidr, err = alloc.Select(input)
+		if errors.Is(err, alloc.ErrCooling) {
+			until := cooldownUntil(input, reservations.Released)
+
+			return Allocation{}, false, false, &OpError{
+				Op: "allocate", Pool: poolID, ID: spec.ID, Reason: "cooldown",
+				Err: fmt.Errorf("only cooling space fits until %s: %w", until, ErrPoolExhausted),
+			}
+		}
 	case RequestExplicit:
 		cidr = request.CIDR.Masked()
 		err = alloc.CheckExplicit(pool.CIDRs, used, cidr)
@@ -172,7 +204,7 @@ func (client *Client) allocateAttempt(
 		CIDR:        cidr,
 		Description: spec.Description,
 		Labels:      cloneLabels(spec.Labels),
-		CreatedAt:   client.clock().UTC(),
+		CreatedAt:   now,
 	}
 	reservations.Allocations[spec.ID] = allocation
 
@@ -206,6 +238,56 @@ func (client *Client) allocateAttempt(
 	}
 
 	return Allocation{}, false, false, mapStorageError("allocate", poolID, spec.ID, err)
+}
+
+// pruneReleased drops records at or before now, independently of current policy.
+func pruneReleased(reservations *reservationsDocument, now time.Time) {
+	for cidr, expiry := range reservations.Released {
+		if !expiry.After(now) {
+			delete(reservations.Released, cidr)
+		}
+	}
+}
+
+func coolingPrefixes(released map[netip.Prefix]time.Time, after time.Time) []netip.Prefix {
+	cooling := make([]netip.Prefix, 0, len(released))
+	for cidr, expiry := range released {
+		if expiry.After(after) {
+			cooling = append(cooling, cidr)
+		}
+	}
+
+	return cooling
+}
+
+// cooldownUntil is called only after strict selection found that cooling space
+// fits. Removing every record therefore guarantees a successful selection.
+func cooldownUntil(input alloc.Input, released map[netip.Prefix]time.Time) string {
+	expiries := make([]time.Time, 0, len(released))
+	for _, expiry := range released {
+		expiries = append(expiries, expiry)
+	}
+
+	slices.SortFunc(expiries, time.Time.Compare)
+	expiries = slices.CompactFunc(expiries, time.Time.Equal)
+	input.CooldownMode = alloc.CooldownStrict
+
+	// Strict availability is monotonic as records expire: subtraction only
+	// removes cooling ranges, so the first successful selection can be searched.
+	first := sort.Search(len(expiries), func(index int) bool {
+		input.Cooling = coolingPrefixes(released, expiries[index])
+
+		_, err := alloc.Select(input)
+
+		return err == nil
+	})
+	until := expiries[first]
+
+	if until.Nanosecond() != 0 {
+		until = until.Truncate(time.Second).Add(time.Second)
+	}
+
+	return until.UTC().Format(time.RFC3339)
 }
 
 // GetAllocation returns one allocation.
@@ -264,6 +346,12 @@ func (client *Client) ListAllocations(ctx context.Context, poolID string) ([]All
 // document is invisible to the pool_in_use check, and would publish the child
 // on released space.
 func (client *Client) Release(ctx context.Context, poolID, id string) error {
+	return client.release(ctx, poolID, id, true)
+}
+
+// release retains the carve-out guard even for unpublished CreatePool rollback,
+// which is the only caller that disables release recording.
+func (client *Client) release(ctx context.Context, poolID, id string, recordRelease bool) error {
 	if err := validateClient(client); err != nil {
 		return err
 	}
@@ -303,11 +391,25 @@ func (client *Client) Release(ctx context.Context, poolID, id string) error {
 				return err
 			}
 		} else {
-			if _, found := reservations.Allocations[id]; !found {
+			allocation, found := reservations.Allocations[id]
+			if !found {
 				return nil
 			}
 
+			now := client.clock().UTC()
+			pruneReleased(&reservations, now)
 			delete(reservations.Allocations, id)
+
+			if recordRelease && reservations.Cooldown.Mode != CooldownNone {
+				if reservations.Released == nil {
+					reservations.Released = make(map[netip.Prefix]time.Time)
+				}
+
+				expiry := now.Add(reservations.Cooldown.Duration)
+				if expiry.After(reservations.Released[allocation.CIDR]) {
+					reservations.Released[allocation.CIDR] = expiry
+				}
+			}
 
 			data, encodeErr := encodeReservationsDocument(reservations)
 			if encodeErr != nil {
@@ -407,6 +509,8 @@ func (client *Client) UpdateAllocationMetadata(
 			allocation.Description = description
 			allocation.Labels = cloneLabels(labels)
 			reservations.Allocations[id] = allocation
+
+			pruneReleased(&reservations, client.clock().UTC())
 
 			data, encodeErr := encodeReservationsDocument(reservations)
 			if encodeErr != nil {
@@ -575,6 +679,8 @@ func invalidRequestReason(pool Pool, request Request) string {
 
 func mapAllocatorError(op, poolID, id string, err error) error {
 	switch {
+	case errors.Is(err, alloc.ErrInvalidArgument):
+		return &OpError{Op: op, Pool: poolID, ID: id, Err: ErrInvalidArgument}
 	case errors.Is(err, alloc.ErrInvalidCIDR):
 		return &OpError{Op: op, Pool: poolID, ID: id, Err: ErrInvalidCIDR}
 	case errors.Is(err, alloc.ErrExhausted):

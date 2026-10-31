@@ -25,8 +25,11 @@ carve-out is an ordinary allocation in the parent with the ID
 Deleting the child releases the carve-out.
 
 **Allocation.** One CIDR assigned from a pool. You ask for either the next free
-block of a prefix length (`next`) or an exact CIDR (`explicit`). Allocation
-search is lowest-address-first.
+block of a prefix length (`next`) or an exact CIDR (`explicit`). Each pool has
+its own strategy for `next`: `best-fit` takes the smallest free block that
+fits, and `lowest` takes the lowest free address. New pools default to
+`best-fit`. Pools created before strategies existed are `lowest`. See
+[Allocation strategy and fragmentation](#allocation-strategy-and-fragmentation).
 
 **Explicit CIDR as reservation.** An explicit allocation reserves exactly that
 range. Use it to record space that's already in use (an existing VPC, a peered
@@ -47,7 +50,7 @@ creator from reviving a deleted pool.
 
 ## Storage layout
 
-A backend holds two v1 JSON documents per pool, below an optional prefix:
+A backend holds two JSON documents per pool, below an optional prefix:
 
 | Key | Contents | Written by |
 | --- | --- | --- |
@@ -117,8 +120,77 @@ identity that may only allocate needs no write access to `pools/*`.
 }
 ```
 
+Each document picks its schema version on its own, every time it's written:
+
+- The pool document is v1 when the strategy is `lowest`, and v2 otherwise. A
+  v2 pool document adds `strategy`.
+- The reservations document is v1 when the pool has no cooldown and no release
+  records, and v2 otherwise. A v2 reservations document adds `cooldown`
+  (`mode` and whole `seconds`) and `released`, a map from each released CIDR to
+  the time its cooldown ends.
+
+So a pool created with the default `best-fit` strategy has a v2 pool document,
+and a `lowest` pool without a cooldown keeps exactly the v1 bytes shown above.
+The v2 forms of the same two documents:
+
+```json
+{
+  "schema_version": 2,
+  "kind": "pool",
+  "pool_id": "prod-main",
+  "incarnation": "0123456789abcdef0123456789abcdef",
+  "family": 4,
+  "cidrs": [
+    "10.0.0.0/16",
+    "10.2.0.0/16"
+  ],
+  "parent": {
+    "pool_id": "global",
+    "allocation_id": "pool:prod-main:0123456789abcdef0123456789abcdef"
+  },
+  "description": "production",
+  "labels": {
+    "region": "eu-west-1",
+    "team": "platform"
+  },
+  "strategy": "best-fit"
+}
+```
+
+```json
+{
+  "schema_version": 2,
+  "kind": "reservations",
+  "pool_id": "prod-main",
+  "incarnation": "0123456789abcdef0123456789abcdef",
+  "allocations": {
+    "018f22e2-1865-7be8-9f45-35d90607d0f7": {
+      "request": {
+        "kind": "next",
+        "prefix_length": 24
+      },
+      "cidr": "10.0.0.0/24",
+      "description": "application",
+      "labels": {
+        "environment": "prod"
+      },
+      "created_at": "2026-10-29T12:30:00Z"
+    }
+  },
+  "cooldown": {
+    "mode": "strict",
+    "seconds": 86400
+  },
+  "released": {
+    "10.0.1.0/24": "2026-10-30T12:30:00Z"
+  }
+}
+```
+
 A document with an unknown `schema_version` is refused with
-`ErrUnsupportedSchema`. Unknown fields are ignored when reading.
+`ErrUnsupportedSchema`. Clients older than this release only know v1, so they
+refuse v2 documents; see [Upgrading](#upgrading). Unknown fields are ignored
+when reading.
 
 Don't edit these documents by hand. Use the CLI or the library, which keep the
 incarnations and the non-overlap invariant intact.
@@ -176,8 +248,9 @@ Commands:
 | `ipam pool create <id> --parent ID --prefix-length N` | Carve the next free `/N` from a parent as a child pool. |
 | `ipam pool create <id> --parent ID --cidr CIDR` | Carve an explicit CIDR from a parent. |
 | `ipam pool get <id>` | Show a pool. |
-| `ipam pool list` | List pools. |
+| `ipam pool list` | List pools. Pools with an unsupported schema are skipped with a warning on stderr; the command still exits 0. |
 | `ipam pool update <id> [--description TEXT] [--label k=v...]` | Change metadata. `--label` replaces the whole label set. |
+| `ipam pool update <id> [--strategy S] [--cooldown D --cooldown-mode M \| --no-cooldown]` | Change the allocation policy. |
 | `ipam pool delete <id>` | Delete an empty pool, releasing its parent carve-out. |
 | `ipam alloc create <pool> --prefix-length N [--id UUID]` | Allocate the next free `/N`. Prints the generated ID. |
 | `ipam alloc create <pool> --cidr CIDR [--id UUID]` | Reserve an explicit CIDR. |
@@ -190,7 +263,22 @@ Commands:
 | `ipam completion bash\|zsh\|fish\|powershell` | Print a shell completion script. |
 
 `pool create` and `alloc create` also take `--description TEXT` and
-`--label key=value` (repeatable). `alloc` has the alias `allocation`.
+`--label key=value` (repeatable). `pool create` also takes the policy flags:
+
+- `--strategy best-fit|lowest`: the `next` strategy. Defaults to `best-fit`.
+- `--cooldown D` with `--cooldown-mode strict|fit-aware`: hold released CIDRs
+  back for `D`, a Go duration such as `1h` or `30m`. The two flags go
+  together. `D` must be whole seconds, from `1s` to `8760h`.
+
+`pool update` takes the same flags, plus `--no-cooldown` to turn the cooldown
+off. Flags you don't pass keep their current value. When you pass both policy
+and metadata flags, the policy is written first and the metadata second. If
+the metadata write fails, the policy change stays applied; run the same
+command again to finish.
+
+Table output for pools has `STRATEGY` and `COOLDOWN` columns. JSON output
+always has `"strategy"`, and has `"cooldown": {"mode": ..., "duration": ...}`
+only when the pool has a cooldown. `alloc` has the alias `allocation`.
 `ipam help <command>` and `--help` show help for any command.
 
 A walk-through against a local directory:
@@ -266,6 +354,7 @@ deletes or modifies data:
 | `data-protection` | versioning or soft delete is on | state unknown (no permission to read it, Azurite), or a `file://` backend | both are known to be off |
 | `hierarchical-namespace` | flat namespace | unknown | Azure hierarchical namespace (Data Lake Gen2) is on |
 | `write-probe` (per pool) | conditional writes honoured, or write denied | reservations document missing or unreadable (probe skipped) | the backend ignored a conditional write, or an `--expect-write`/`--expect-no-write` assertion failed |
+| `fragmentation` (per pool) | statistics read, index below the WARN threshold | fragmentation index >= 0.5 with capacity >= 4, or statistics unavailable (not found, unsupported schema, read error) | never |
 
 The write probe sends a pool's own reservations bytes back with a version that
 can't match. A precondition failure proves you can write and that conditions
@@ -293,8 +382,162 @@ ipam doctor --expect-write prod --expect-no-write global
 The same command run with the platform identity's full access FAILs on
 `global` (`write allowed, but --expect-no-write was given`) and exits 6.
 
+The `fragmentation` check only reads. It's described in
+[Monitoring](#monitoring). A fragmentation WARN makes the overall result
+`warn`, which still exits 0. Free-space metrics ignore cooling ranges;
+strict cooldown can refuse a request even when allocatable > 0. The active
+cooling range count is reported separately.
+
 **Limit:** doctor can't detect a backend that ignores conditional DELETE,
 because probing that would delete data. It only covers conditional writes.
+
+## Upgrading
+
+Upgrade every client that reads the bucket (library users, the CLI, the
+Terraform provider) before you create a pool with a strategy other than
+`lowest` or with a cooldown, and before you switch an existing pool to one
+with `pool update` (or `UpdatePoolPolicy`): setting `--strategy best-fit` or a
+cooldown rewrites that pool's document as v2 on the same write. Until then,
+create and keep pools on `--strategy lowest` with no cooldown: their documents
+stay v1, and older clients keep working with them.
+
+This matters because the default `best-fit` strategy writes a v2 pool
+document, and older clients refuse v2:
+
+- v0.2.0 `ipam pool list` fails on a bucket that holds a v2 pool. New clients
+  skip such a pool and warn instead (see [CLI](#cli)).
+- A v0.2.0 client that deletes a child of a v2 parent leaks the child's
+  carve-out in the parent. The space stays reserved and nothing overlaps.
+  Reclaim it with a new client:
+
+  ```text
+  ipam alloc release <parent> pool:<child>:<incarnation>
+  ```
+
+  Read [Recovering a leaked allocation](#recovering-a-leaked-allocation) first.
+
+## Allocation strategy and fragmentation
+
+Fragmentation is free space broken into pieces too small for the requests you
+make. A pool can have plenty of free addresses in total and still fail a
+`/24` request because no single aligned `/24` is free.
+
+`lowest` puts each allocation at the lowest free address that fits. It's
+predictable, but releases leave holes that later requests of other sizes
+split up. `best-fit` puts each allocation in the smallest free block that
+fits (lowest address on a tie), which keeps large blocks whole for large
+requests. In the committed simulation test
+(`TestSimulationBestFitNotWorseThanLowest`, 16 mixed-size churn scenarios)
+`lowest` had 20 failed requests caused by fragmentation and `best-fit` had 6,
+and at the end `best-fit` left room for 21568 `/24`s against 21441 for
+`lowest`. Those are totals over the scenarios. They don't promise that
+`best-fit` wins on every workload.
+
+Either strategy works best when you shape the requests:
+
+- Segregate sizes into child pools. For example, carve a `/20` child pool
+  that only ever hands out `/28`s.
+- Standardise request sizes, so freed space fits the next request.
+- Put explicit reservations for legacy space at the edges of a range, not in
+  the middle.
+- Prefer one large CIDR per pool over many small ones.
+- For IPv6, use uniform `/64` or `/56` sizes.
+
+Change the strategy of an existing pool with
+`ipam pool update <id> --strategy best-fit`. Only later allocations are
+affected.
+
+### Cooldown
+
+A cooldown holds a released CIDR back for a while, so that a stale reference
+(a DNS record, a firewall rule) doesn't hit a new owner straight away. There
+are two modes:
+
+- `strict` never hands out space that's still cooling for `next` requests.
+  That guarantee means a `next` allocation can be refused while the pool has
+  free space.
+  The refusal is `ErrPoolExhausted` (exit 5) with reason `cooldown`, and the
+  message names the time when cooling space becomes usable.
+- `fit-aware` avoids cooling space only when an equally tight free block
+  exists. It costs nothing in fragmentation, but the delay is weak: when the
+  only good fit is cooling, it's reused.
+
+Explicit CIDR requests bypass cooldown in both modes, including `strict`.
+They still require containment in the pool and no overlap with live
+allocations; they can intentionally reserve a range that is still cooling.
+
+A strict refusal from the CLI:
+
+```sh
+ipam pool create edge --cidr 10.9.0.0/24 --cooldown 1h --cooldown-mode strict
+ipam alloc create edge --prefix-length 24 --id 018f22e2-1865-7be8-9f45-35d90607d0f7
+ipam alloc release edge 018f22e2-1865-7be8-9f45-35d90607d0f7
+ipam alloc create edge --prefix-length 24
+```
+
+The last command exits 5:
+
+```text
+ipam: allocate pool edge allocation 01a18ed5-9aeb-7d6d-ba04-b409d54946f3 (cooldown): only cooling space fits until 2026-10-30T23:02:06Z: ipam: pool exhausted
+```
+
+Switching to `fit-aware` lets the same request reuse the cooling `/24`:
+
+```sh
+ipam pool update edge --cooldown 24h --cooldown-mode fit-aware
+ipam alloc create edge --prefix-length 24
+```
+
+Pick a duration that covers how long stale references to an address live in
+your environment, such as DNS TTLs and the time to clean up rules that point
+at it. Durations are whole seconds, at most `8760h` (one year). Keep them
+short where you can, for two reasons:
+
+- Every release adds a record to the pool's reservations document, and the
+  record stays until its cooldown ends. A long cooldown on a busy pool makes
+  that document bigger, and every write to the pool rewrites it.
+- Release and expiry times come from the clock of the client that writes the
+  document. Clock skew between clients shifts when cooling space becomes
+  usable, and the release record's expiry is computed before the release is
+  written, so a slow write uses up part of the cooldown.
+
+`ipam pool update <id> --no-cooldown` turns the cooldown off and drops every
+release record.
+
+`UpdatePoolPolicy` (and so `pool update` with policy flags) makes up to two
+writes, the strategy in the pool document and then the cooldown in the
+reservations document. They aren't atomic. If the second fails, the error says
+so and the pool keeps the new strategy with the old cooldown; repeating the
+same update completes it.
+
+### Monitoring
+
+`ipam doctor` reports a `fragmentation` row per pool, for example:
+
+```text
+fragmentation           net     PASS    util 0.0%, free 65536 of 65536, largest /16, blocks /16:1
+```
+
+The detail lists utilisation, free addresses, the largest free block and the
+free blocks by prefix length. When the pool has allocations, it adds the
+pool's most requested prefix length, how many of those are allocatable
+against how many would fit if the free space were packed (capacity), and the
+fragmentation index. With `-o json` the same numbers are in `stats`:
+`utilization`, `total`, `free`, `allocatable`, `capacity`,
+`fragmentation_index`, `largest_free`, `free_blocks`, `reference_length`,
+`strategy` and `cooldown`. `fragmentation_index` is rounded to two decimals;
+the row's `status` is computed from the exact value, so use `status` rather
+than re-applying the 0.5 threshold to the rounded index.
+
+Free space, allocatable, capacity and the fragmentation index ignore cooling
+ranges: they measure fragmentation, not immediate availability under cooldown.
+Strict cooldown may refuse a request even when allocatable > 0. The detail
+appends `cooling N` when N > 0, counting active cooling ranges separately.
+
+The check WARNs when the fragmentation index is 0.5 or more and the capacity
+is at least 4, or when the statistics can't be read. It never FAILs, and a
+WARN-only run exits 0, so alert on the `warn` result rather than the exit
+code.
 
 ## Library usage
 
@@ -350,7 +593,9 @@ The client API:
   backend from a URL. `ipam.New(store, opts...)` wraps a backend you built
   yourself.
 - Pools: `CreatePool`, `GetPool`, `ListPools`, `UpdatePoolMetadata`,
-  `DeletePool`.
+  `UpdatePoolPolicy`, `PoolStats`, `DeletePool`. `ListPools` skips pools with
+  an unsupported schema: it returns the readable pools together with an
+  `*ipam.UnsupportedPoolsError` that names the skipped ones.
 - Allocations: `Allocate`, `GetAllocation`, `ListAllocations`,
   `UpdateAllocationMetadata`, `Release`.
 - `ipam.NewAllocationID()` returns a fresh UUIDv7, for callers that want to

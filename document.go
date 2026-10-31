@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"time"
 
 	"github.com/appvia/ipam/internal/document"
 )
@@ -34,8 +35,20 @@ func encodePoolDocument(stored poolDocument) ([]byte, error) {
 		}
 	}
 
+	// The pool document is v1 exactly when the strategy is lowest, so pools
+	// with the pre-policy behaviour keep their v1 bytes.
+	schemaVersion, strategy := document.SchemaVersionV1, ""
+
+	switch pool.Policy.Strategy {
+	case StrategyLowest:
+	case StrategyBestFit:
+		schemaVersion, strategy = document.SchemaVersionV2, string(pool.Policy.Strategy)
+	default:
+		return nil, fmt.Errorf("encode pool document strategy %q: %w", pool.Policy.Strategy, ErrInvalidArgument)
+	}
+
 	data, err := document.EncodePool(document.Pool{
-		SchemaVersion: 1,
+		SchemaVersion: schemaVersion,
 		Kind:          "pool",
 		PoolID:        pool.ID,
 		Incarnation:   stored.Incarnation,
@@ -44,6 +57,7 @@ func encodePoolDocument(stored poolDocument) ([]byte, error) {
 		Parent:        parent,
 		Description:   pool.Description,
 		Labels:        cloneLabels(pool.Labels),
+		Strategy:      strategy,
 	})
 	if err != nil {
 		return nil, mapDocumentError("encode pool document", err)
@@ -68,12 +82,21 @@ func decodePoolDocument(data []byte, expectedPoolID string) (poolDocument, error
 		cidrs = append(cidrs, prefix)
 	}
 
+	strategy := StrategyLowest
+	if stored.SchemaVersion != document.SchemaVersionV1 {
+		strategy = AllocationStrategy(stored.Strategy)
+		if strategy != StrategyLowest && strategy != StrategyBestFit {
+			return poolDocument{}, fmt.Errorf("decode pool document strategy %q: %w", stored.Strategy, ErrInvalidArgument)
+		}
+	}
+
 	pool := Pool{
 		ID:          stored.PoolID,
 		Family:      stored.Family,
 		CIDRs:       cidrs,
 		Description: stored.Description,
 		Labels:      cloneLabels(stored.Labels),
+		Policy:      PoolPolicy{Strategy: strategy},
 	}
 	if stored.Parent != nil {
 		pool.Parent = &ParentRef{
@@ -135,13 +158,23 @@ func encodeReservationsDocument(stored reservationsDocument) ([]byte, error) {
 		}
 	}
 
-	data, err := document.EncodeReservations(document.Reservations{
-		SchemaVersion: 1,
+	wire := document.Reservations{
+		SchemaVersion: document.SchemaVersionV1,
 		Kind:          "reservations",
 		PoolID:        stored.PoolID,
 		Incarnation:   stored.Incarnation,
 		Allocations:   allocations,
-	})
+	}
+
+	// The reservations document is v1 exactly when there is no cooldown and no
+	// release record, so pools with the pre-policy behaviour keep their v1 bytes.
+	if stored.Cooldown.Mode != CooldownNone || len(stored.Released) != 0 {
+		if err := encodeCooldownState(&wire, stored); err != nil {
+			return nil, err
+		}
+	}
+
+	data, err := document.EncodeReservations(wire)
 	if err != nil {
 		return nil, mapDocumentError("encode reservations document", err)
 	}
@@ -190,11 +223,98 @@ func decodeReservationsDocument(data []byte, expectedPoolID string) (reservation
 		}
 	}
 
+	cooldown, released, err := decodeCooldownState(stored)
+	if err != nil {
+		return reservationsDocument{}, err
+	}
+
 	return reservationsDocument{
 		PoolID:      stored.PoolID,
 		Incarnation: stored.Incarnation,
 		Allocations: allocations,
+		Cooldown:    cooldown,
+		Released:    released,
 	}, nil
+}
+
+// encodeCooldownState fills the v2 cooldown and release records of wire.
+func encodeCooldownState(wire *document.Reservations, stored reservationsDocument) error {
+	if err := validateCooldown(stored.Cooldown); err != nil {
+		return fmt.Errorf("encode reservations document: %w", err)
+	}
+
+	wire.SchemaVersion = document.SchemaVersionV2
+	if stored.Cooldown.Mode != CooldownNone {
+		wire.Cooldown = &document.Cooldown{
+			Mode:    string(stored.Cooldown.Mode),
+			Seconds: int64(stored.Cooldown.Duration / time.Second),
+		}
+	}
+
+	wire.Released = make(map[string]string, len(stored.Released))
+	for prefix, expiry := range stored.Released {
+		cidr, err := canonicalNetPrefix(prefix)
+		if err != nil || cidr != prefix {
+			return fmt.Errorf("encode release record CIDR: %w", ErrInvalidArgument)
+		}
+
+		if expiry.IsZero() {
+			return fmt.Errorf("encode release record %q expiry: %w", cidr, ErrInvalidArgument)
+		}
+
+		wire.Released[cidr.String()] = expiry.UTC().Format(time.RFC3339Nano)
+	}
+
+	return nil
+}
+
+// decodeCooldownState validates and converts the v2 cooldown and release
+// records; a v1 document has neither.
+func decodeCooldownState(stored document.Reservations) (Cooldown, map[netip.Prefix]time.Time, error) {
+	var cooldown Cooldown
+
+	if stored.Cooldown != nil {
+		if stored.Cooldown.Seconds < int64(minCooldown/time.Second) ||
+			stored.Cooldown.Seconds > int64(maxCooldown/time.Second) {
+			return Cooldown{}, nil, fmt.Errorf(
+				"decode reservations document cooldown seconds must be between 1 and %d: %w",
+				int64(maxCooldown/time.Second), ErrInvalidArgument,
+			)
+		}
+
+		cooldown = Cooldown{
+			Mode:     CooldownMode(stored.Cooldown.Mode),
+			Duration: time.Duration(stored.Cooldown.Seconds) * time.Second,
+		}
+		if cooldown.Mode == CooldownNone {
+			return Cooldown{}, nil, fmt.Errorf("decode reservations document cooldown mode is empty: %w", ErrInvalidArgument)
+		}
+
+		if err := validateCooldown(cooldown); err != nil {
+			return Cooldown{}, nil, fmt.Errorf("decode reservations document: %w", err)
+		}
+	}
+
+	if len(stored.Released) == 0 {
+		return cooldown, nil, nil
+	}
+
+	released := make(map[netip.Prefix]time.Time, len(stored.Released))
+	for raw, rawExpiry := range stored.Released {
+		cidr, err := canonicalPrefix(raw)
+		if err != nil || cidr.String() != raw {
+			return Cooldown{}, nil, fmt.Errorf("decode release record CIDR is not canonical: %w", ErrInvalidArgument)
+		}
+
+		expiry, err := time.Parse(time.RFC3339Nano, rawExpiry)
+		if err != nil {
+			return Cooldown{}, nil, fmt.Errorf("decode release record %q expiry: %w", raw, ErrInvalidArgument)
+		}
+
+		released[cidr] = expiry.UTC()
+	}
+
+	return cooldown, released, nil
 }
 
 func requestToDocument(request Request) (document.Request, error) {

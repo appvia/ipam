@@ -29,6 +29,10 @@ type PoolSpec struct {
 	Request     Request
 	Description string
 	Labels      map[string]string
+	// Policy is the pool's own allocation policy; a child never inherits its
+	// parent's. StrategyDefault creates a best-fit pool. On a re-run against
+	// an existing pool, an unset strategy or cooldown matches any stored value.
+	Policy PoolPolicy
 }
 
 func poolKey(poolID string) string         { return poolsPrefix + poolID + documentSuffix }
@@ -128,10 +132,10 @@ func (client *Client) createPoolAttempt(
 	}
 
 	switch {
-	case documents.pool != nil && !poolMatchesSpec(*documents.pool, spec):
+	case documents.pool != nil && !poolMatchesSpec(*documents.pool, documents.reservations, spec):
 		return Pool{}, createFinished, poolExistsError(spec.ID)
 	case documents.usable():
-		return documents.pool.Pool, createFinished, nil
+		return documents.publicPool(), createFinished, nil
 	case documents.pool != nil:
 		return Pool{}, createIncomplete, errPoolWithoutReservations
 	case documents.reservations != nil:
@@ -148,6 +152,10 @@ func (client *Client) createPoolAttempt(
 		CIDRs:       append([]netip.Prefix(nil), spec.CIDRs...),
 		Description: spec.Description,
 		Labels:      cloneLabels(spec.Labels),
+		Policy:      spec.Policy,
+	}
+	if pool.Policy.Strategy == StrategyDefault {
+		pool.Policy.Strategy = StrategyBestFit
 	}
 
 	if spec.ParentPool != "" {
@@ -166,19 +174,32 @@ func (client *Client) createPoolAttempt(
 			true,
 		)
 		if allocateErr != nil {
-			return Pool{}, createFinished, &OpError{Op: "create pool", Pool: spec.ID, Err: allocateErr}
+			var opErr *OpError
+
+			reason := ""
+			if errors.As(allocateErr, &opErr) && opErr.Reason == "cooldown" {
+				reason = "cooldown"
+			}
+
+			return Pool{}, createFinished, &OpError{
+				Op: "create pool", Pool: spec.ID, Reason: reason, Err: allocateErr,
+			}
 		}
 
 		pool.CIDRs = []netip.Prefix{allocation.CIDR}
 		pool.Parent = &ParentRef{PoolID: spec.ParentPool, AllocationID: carveID}
 	}
 
+	publicationPossible := false
+
 	canonical, err := canonicalPool(pool)
 	if err == nil {
 		if err = lock.LockContext(ctx); err == nil {
 			var outcome createOutcome
 
-			outcome, err = client.publishPool(ctx, poolDocument{Pool: canonical, Incarnation: incarnation})
+			outcome, publicationPossible, err = client.publishPool(
+				ctx, poolDocument{Pool: canonical, Incarnation: incarnation},
+			)
 			lock.Unlock()
 
 			if outcome == createFinished && err == nil {
@@ -186,24 +207,26 @@ func (client *Client) createPoolAttempt(
 			}
 
 			if outcome != createFinished {
-				return Pool{}, outcome, client.releaseOwnCarveOut(ctx, pool.Parent, err)
+				return Pool{}, outcome, client.releaseOwnCarveOut(ctx, pool.Parent, publicationPossible, err)
 			}
 		}
 	}
 
-	return Pool{}, createFinished, client.releaseOwnCarveOut(ctx, pool.Parent, err)
+	return Pool{}, createFinished, client.releaseOwnCarveOut(ctx, pool.Parent, publicationPossible, err)
 }
 
 // releaseOwnCarveOut withdraws the carve-out this CreatePool call created. The
 // ID is keyed by this call's incarnation, so it can never release another
-// incarnation's space; Release still refuses while any document of that
-// incarnation exists, which keeps a published child's carve-out in place.
-func (client *Client) releaseOwnCarveOut(ctx context.Context, parent *ParentRef, cause error) error {
+// incarnation's space. It records cooldown unless publication was impossible,
+// and refuses while any document of that incarnation exists.
+func (client *Client) releaseOwnCarveOut(
+	ctx context.Context, parent *ParentRef, publicationPossible bool, cause error,
+) error {
 	if parent == nil {
 		return cause
 	}
 
-	releaseErr := client.Release(ctx, parent.PoolID, parent.AllocationID)
+	releaseErr := client.release(ctx, parent.PoolID, parent.AllocationID, publicationPossible)
 	if releaseErr == nil || errors.Is(releaseErr, ErrNotFound) || conflictReason(releaseErr, "pool_in_use") {
 		return cause
 	}
@@ -215,34 +238,39 @@ func (client *Client) releaseOwnCarveOut(ctx context.Context, parent *ParentRef,
 // with CreateIfAbsent, and verifies afterwards that the reservations document
 // still carries this incarnation. Any document it created and cannot keep is
 // removed again, conditionally on its own version.
-func (client *Client) publishPool(ctx context.Context, proposed poolDocument) (createOutcome, error) {
+func (client *Client) publishPool(ctx context.Context, proposed poolDocument) (createOutcome, bool, error) {
 	reservationsData, err := encodeReservationsDocument(reservationsDocument{
 		PoolID: proposed.ID, Incarnation: proposed.Incarnation, Allocations: map[string]Allocation{},
+		Cooldown: proposed.Policy.Cooldown,
 	})
 	if err != nil {
-		return createFinished, err
+		return createFinished, false, err
 	}
 
-	reservationsVersion, owned, err := client.createOwnDocument(
+	reservationsVersion, owned, _, err := client.createOwnDocument(
 		ctx, reservationsKey(proposed.ID), proposed.ID, reservationsData, proposed.Incarnation,
 	)
 	if err != nil {
-		return createFinished, err
+		return createFinished, false, err
 	}
 
 	if !owned {
-		return createIncomplete, errReservationsWithoutPool
+		return createIncomplete, false, errReservationsWithoutPool
 	}
+
+	publicationPossible := false
 
 	poolData, err := encodePoolDocument(proposed)
 	if err == nil {
 		var poolVersion storage.Version
 
-		poolVersion, owned, err = client.createOwnDocument(
+		poolVersion, owned, publicationPossible, err = client.createOwnDocument(
 			ctx, poolKey(proposed.ID), proposed.ID, poolData, proposed.Incarnation,
 		)
 		if err == nil && owned {
-			return client.verifyPublishedPool(ctx, proposed, poolVersion)
+			outcome, verifyErr := client.verifyPublishedPool(ctx, proposed, poolVersion)
+
+			return outcome, publicationPossible, verifyErr
 		}
 	}
 
@@ -250,10 +278,10 @@ func (client *Client) publishPool(ctx context.Context, proposed poolDocument) (c
 		ctx, reservationsKey(proposed.ID), proposed.ID, reservationsVersion, proposed.Incarnation,
 	)
 	if err != nil || cleanupErr != nil {
-		return createFinished, errors.Join(err, cleanupErr)
+		return createFinished, publicationPossible, errors.Join(err, cleanupErr)
 	}
 
-	return createRaced, poolExistsError(proposed.ID)
+	return createRaced, publicationPossible, poolExistsError(proposed.ID)
 }
 
 func (client *Client) verifyPublishedPool(
@@ -285,39 +313,40 @@ func (client *Client) verifyPublishedPool(
 }
 
 // createOwnDocument reports whether the document at key now holds this call's
-// incarnation because this call created it.
+// incarnation because this call created it, and whether its write may have
+// landed even if the document has since been deleted.
 func (client *Client) createOwnDocument(
 	ctx context.Context,
 	key, poolID string,
 	data []byte,
 	incarnation string,
-) (storage.Version, bool, error) {
+) (storage.Version, bool, bool, error) {
 	version, err := client.store.CreateIfAbsent(ctx, key, data)
 
 	switch {
 	case err == nil:
-		return version, true, nil
+		return version, true, true, nil
 	case errors.Is(err, storage.ErrPreconditionFailed):
-		return "", false, nil
+		return "", false, false, nil
 	case !errors.Is(err, storage.ErrUnknownOutcome):
-		return "", false, err
+		return "", false, false, err
 	}
 
 	current, version, getErr := client.store.Get(ctx, key)
 	if errors.Is(getErr, storage.ErrNotFound) {
-		return "", false, nil
+		return "", false, true, nil
 	}
 
 	if getErr != nil {
-		return "", false, getErr
+		return "", false, true, getErr
 	}
 
 	observed, decodeErr := documentIncarnation(key, poolID, current)
 	if decodeErr != nil {
-		return "", false, decodeErr
+		return "", false, true, decodeErr
 	}
 
-	return version, observed == incarnation, nil
+	return version, observed == incarnation, true, nil
 }
 
 // deleteOwnDocument removes a document of this incarnation. It never deletes a
@@ -392,6 +421,15 @@ func (documents poolDocuments) usable() bool {
 		documents.pool.Incarnation == documents.reservations.Incarnation
 }
 
+// publicPool returns a usable pool with its concrete policy: the strategy
+// comes from the pool document and the cooldown from the reservations document.
+func (documents poolDocuments) publicPool() Pool {
+	pool := clonePool(documents.pool.Pool)
+	pool.Policy.Cooldown = documents.reservations.Cooldown
+
+	return pool
+}
+
 func (client *Client) readPoolDocuments(ctx context.Context, poolID string) (poolDocuments, error) {
 	var documents poolDocuments
 
@@ -428,6 +466,10 @@ func (client *Client) readPoolDocuments(ctx context.Context, poolID string) (poo
 
 func validatePoolSpec(spec PoolSpec) error {
 	if err := validatePoolID(spec.ID); err != nil {
+		return err
+	}
+
+	if err := validatePolicy(spec.Policy, true); err != nil {
 		return err
 	}
 
@@ -468,9 +510,14 @@ func reservedAllocationID(childID, incarnation string) string {
 	return "pool:" + childID + ":" + incarnation
 }
 
-func poolMatchesSpec(stored poolDocument, spec PoolSpec) bool {
+// poolMatchesSpec reports whether a create of spec is satisfied by the stored
+// pool. reservations is the stored reservations document, if any; the
+// cooldown is compared only when it belongs to the stored pool's incarnation,
+// so residue still takes the pool_incomplete path.
+func poolMatchesSpec(stored poolDocument, reservations *reservationsDocument, spec PoolSpec) bool {
 	if stored.Description != spec.Description ||
-		!maps.Equal(stored.Labels, cloneLabels(spec.Labels)) {
+		!maps.Equal(stored.Labels, cloneLabels(spec.Labels)) ||
+		!policyMatchesSpec(stored, reservations, spec.Policy) {
 		return false
 	}
 
@@ -480,6 +527,8 @@ func poolMatchesSpec(stored poolDocument, spec PoolSpec) bool {
 			CIDRs:       append([]netip.Prefix(nil), spec.CIDRs...),
 			Description: spec.Description,
 			Labels:      cloneLabels(spec.Labels),
+			// The policy was matched above, where unset fields match any value.
+			Policy: stored.Policy,
 		})
 
 		return err == nil && poolsEqual(stored.Pool, expected)
@@ -510,6 +559,21 @@ func poolMatchesSpec(stored poolDocument, spec PoolSpec) bool {
 	return stored.CIDRs[0] == request.CIDR
 }
 
+// policyMatchesSpec reports whether every policy field set in the spec equals
+// the stored value; unset fields match any stored value.
+func policyMatchesSpec(stored poolDocument, reservations *reservationsDocument, policy PoolPolicy) bool {
+	if policy.Strategy != StrategyDefault && policy.Strategy != stored.Policy.Strategy {
+		return false
+	}
+
+	if policy.Cooldown.Mode == CooldownNone ||
+		reservations == nil || reservations.Incarnation != stored.Incarnation {
+		return true
+	}
+
+	return policy.Cooldown == reservations.Cooldown
+}
+
 func poolExistsError(poolID string) error {
 	return &OpError{
 		Op: "create pool", Pool: poolID, Reason: "pool_exists", Err: ErrConflict,
@@ -537,10 +601,13 @@ func (client *Client) GetPool(ctx context.Context, poolID string) (Pool, error) 
 		return Pool{}, &OpError{Op: "get pool", Pool: poolID, Err: ErrNotFound}
 	}
 
-	return clonePool(documents.pool.Pool), nil
+	return documents.publicPool(), nil
 }
 
-// ListPools returns all pool definitions sorted by ID.
+// ListPools returns the readable pool definitions sorted by ID. A pool whose
+// documents use an unsupported schema version is skipped and named in a
+// non-nil *UnsupportedPoolsError, which comes with the valid partial result.
+// Any other error aborts the listing.
 func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 	if err := validateClient(client); err != nil {
 		return nil, err
@@ -552,6 +619,9 @@ func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 	}
 
 	pools := make([]Pool, 0, len(keys))
+
+	var unsupported []string
+
 	for _, key := range keys {
 		poolID, ok := idFromKey(key, poolsPrefix)
 		if !ok {
@@ -563,6 +633,12 @@ func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 			continue
 		}
 
+		if errors.Is(getErr, ErrUnsupportedSchema) {
+			unsupported = append(unsupported, poolID)
+
+			continue
+		}
+
 		if getErr != nil {
 			return nil, getErr
 		}
@@ -571,6 +647,12 @@ func (client *Client) ListPools(ctx context.Context) ([]Pool, error) {
 	}
 
 	slices.SortFunc(pools, func(left, right Pool) int { return strings.Compare(left.ID, right.ID) })
+
+	if len(unsupported) > 0 {
+		slices.Sort(unsupported)
+
+		return pools, &UnsupportedPoolsError{PoolIDs: unsupported}
+	}
 
 	return pools, nil
 }
@@ -644,6 +726,211 @@ func (client *Client) UpdatePoolMetadata(
 
 		if err := client.waitRetry(ctx, attempt-1); err != nil {
 			return err
+		}
+	}
+}
+
+// UpdatePoolPolicy replaces a pool's allocation policy; the strategy must be
+// explicit. It makes up to two independent compare-and-swap writes and changes
+// no other field: (1) if the strategy differs, pools/<id>.json is rewritten
+// (v1 for lowest, v2 otherwise); (2) if the cooldown differs,
+// reservations/<id>.json is rewritten. Turning the cooldown off clears every
+// release record, so the document becomes v1; changing only the duration keeps
+// the existing records' expiry times. Expired records are pruned on write.
+//
+// The two writes are not atomic. If the second fails after the first succeeded,
+// the returned error says so and the pool holds the new strategy with the old
+// cooldown; calling UpdatePoolPolicy again with the same policy completes it.
+// Documents of another incarnation are never rewritten: such a pool reports
+// Reason pool_incomplete, and an absent pool is ErrNotFound. Both phases and
+// their retries are pinned to the incarnation from the first read.
+func (client *Client) UpdatePoolPolicy(ctx context.Context, poolID string, policy PoolPolicy) error {
+	if err := validateClient(client); err != nil {
+		return err
+	}
+
+	if err := validatePoolID(poolID); err != nil {
+		return &OpError{Op: "update pool policy", Pool: poolID, Err: err}
+	}
+
+	if err := validatePolicy(policy, false); err != nil {
+		return &OpError{Op: "update pool policy", Pool: poolID, Err: err}
+	}
+
+	data, _, err := client.store.Get(ctx, poolKey(poolID))
+	if err != nil {
+		return mapStorageError("update pool policy", poolID, "", err)
+	}
+
+	pool, err := decodePoolDocument(data, poolID)
+	if err != nil {
+		return err
+	}
+
+	strategyWritten, err := client.updatePoolStrategy(ctx, poolID, pool.Incarnation, policy.Strategy)
+	if err != nil {
+		return err
+	}
+
+	if err := client.updatePoolCooldown(ctx, poolID, pool.Incarnation, policy.Cooldown); err != nil {
+		if strategyWritten {
+			return fmt.Errorf("strategy applied but cooldown not applied, retry to complete: %w", err)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// readUsableDocuments reads both documents of a pool. An absent pool document
+// is ErrNotFound; a reservations document that is absent or of another
+// incarnation yields the retryable incarnation_mismatch conflict.
+func (client *Client) readUsableDocuments(
+	ctx context.Context, op, poolID, incarnation string,
+) (poolDocuments, error) {
+	documents, err := client.readPoolDocuments(ctx, poolID)
+	if err != nil {
+		return poolDocuments{}, err
+	}
+
+	if documents.pool == nil {
+		return poolDocuments{}, &OpError{Op: op, Pool: poolID, Err: ErrNotFound}
+	}
+
+	if documents.pool.Incarnation != incarnation {
+		return poolDocuments{}, &OpError{
+			Op: op, Pool: poolID, Reason: "pool_incomplete",
+			Err: fmt.Errorf("pool incarnation changed during policy update: %w", ErrNotFound),
+		}
+	}
+
+	if !documents.usable() {
+		return poolDocuments{}, &OpError{
+			Op: op, Pool: poolID, Reason: "incarnation_mismatch",
+			Err: fmt.Errorf("pool documents have different incarnations: %w", ErrConflict),
+		}
+	}
+
+	return documents, nil
+}
+
+// retryPolicyWrite decides whether a failed attempt retries (nil) or ends the
+// operation; wait applies the backoff between attempts.
+func (client *Client) retryPolicyWrite(ctx context.Context, poolID string, attempt int, last error) error {
+	if client.attemptsExhausted(attempt) {
+		return contentionError("update pool policy", poolID, "", last)
+	}
+
+	return client.waitRetry(ctx, attempt-1)
+}
+
+// updatePoolStrategy reports whether the pool now holds the strategy because of
+// this call's write (or a write it observed landing), not because it already did.
+func (client *Client) updatePoolStrategy(
+	ctx context.Context,
+	poolID, incarnation string,
+	strategy AllocationStrategy,
+) (bool, error) {
+	const op = "update pool policy"
+
+	for attempt := 1; ; attempt++ {
+		documents, err := client.readUsableDocuments(ctx, op, poolID, incarnation)
+		if err == nil {
+			if documents.pool.Policy.Strategy == strategy {
+				return false, nil
+			}
+
+			stored := *documents.pool
+			stored.Policy.Strategy = strategy
+
+			next, encodeErr := encodePoolDocument(stored)
+			if encodeErr != nil {
+				return false, encodeErr
+			}
+
+			_, err = client.store.PutIfMatch(ctx, poolKey(poolID), next, documents.poolVersion)
+			if err == nil {
+				return true, nil
+			}
+
+			if errors.Is(err, storage.ErrUnknownOutcome) {
+				current, _, getErr := client.store.Get(ctx, poolKey(poolID))
+				if getErr == nil {
+					observed, decodeErr := decodePoolDocument(current, poolID)
+					if decodeErr == nil && observed.Incarnation == stored.Incarnation &&
+						observed.Policy.Strategy == strategy {
+						return true, nil
+					}
+				}
+			}
+
+			if !errors.Is(err, storage.ErrPreconditionFailed) &&
+				!errors.Is(err, storage.ErrUnknownOutcome) {
+				return false, mapStorageError(op, poolID, "", err)
+			}
+		} else if !conflictReason(err, "incarnation_mismatch") {
+			return false, err
+		}
+
+		if retryErr := client.retryPolicyWrite(ctx, poolID, attempt, err); retryErr != nil {
+			return false, retryErr
+		}
+	}
+}
+
+func (client *Client) updatePoolCooldown(
+	ctx context.Context, poolID, incarnation string, cooldown Cooldown,
+) error {
+	const op = "update pool policy"
+
+	for attempt := 1; ; attempt++ {
+		documents, err := client.readUsableDocuments(ctx, op, poolID, incarnation)
+		if err == nil {
+			if documents.reservations.Cooldown == cooldown {
+				return nil
+			}
+
+			stored := *documents.reservations
+			stored.Cooldown = cooldown
+
+			pruneReleased(&stored, client.clock().UTC())
+
+			if cooldown.Mode == CooldownNone {
+				stored.Released = nil
+			}
+
+			next, encodeErr := encodeReservationsDocument(stored)
+			if encodeErr != nil {
+				return encodeErr
+			}
+
+			_, err = client.store.PutIfMatch(ctx, reservationsKey(poolID), next, documents.reservationsVersion)
+			if err == nil {
+				return nil
+			}
+
+			if errors.Is(err, storage.ErrUnknownOutcome) {
+				current, _, getErr := client.store.Get(ctx, reservationsKey(poolID))
+				if getErr == nil {
+					observed, decodeErr := decodeReservationsDocument(current, poolID)
+					if decodeErr == nil && observed.Incarnation == stored.Incarnation &&
+						observed.Cooldown == cooldown {
+						return nil
+					}
+				}
+			}
+
+			if !errors.Is(err, storage.ErrPreconditionFailed) &&
+				!errors.Is(err, storage.ErrUnknownOutcome) {
+				return mapStorageError(op, poolID, "", err)
+			}
+		} else if !conflictReason(err, "incarnation_mismatch") {
+			return err
+		}
+
+		if retryErr := client.retryPolicyWrite(ctx, poolID, attempt, err); retryErr != nil {
+			return retryErr
 		}
 	}
 }
@@ -823,7 +1110,8 @@ func poolsEqual(left, right Pool) bool {
 		slices.Equal(left.CIDRs, right.CIDRs) &&
 		parentEqual(left.Parent, right.Parent) &&
 		left.Description == right.Description &&
-		maps.Equal(left.Labels, right.Labels)
+		maps.Equal(left.Labels, right.Labels) &&
+		left.Policy == right.Policy
 }
 
 func parentEqual(left, right *ParentRef) bool {

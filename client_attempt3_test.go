@@ -472,7 +472,10 @@ func seedFullPool(t *testing.T, store storage.Storage, poolID string, count int)
 	root := netip.MustParsePrefix("10.0.0.0/8")
 
 	poolData, err := encodePoolDocument(poolDocument{
-		Pool:        Pool{ID: poolID, Family: 4, CIDRs: []netip.Prefix{root}},
+		Pool: Pool{
+			ID: poolID, Family: 4, CIDRs: []netip.Prefix{root},
+			Policy: PoolPolicy{Strategy: StrategyLowest},
+		},
 		Incarnation: incarnation,
 	})
 	assertNoError(t, err)

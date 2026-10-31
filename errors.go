@@ -5,6 +5,7 @@ package ipam
 
 import (
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -74,4 +75,32 @@ func (e *OpError) Unwrap() error {
 	}
 
 	return e.Err
+}
+
+// UnsupportedPoolsError reports pools that ListPools skipped because a document
+// uses a schema version this client does not support. A non-nil error of this
+// type comes with a valid partial result. It unwraps to ErrUnsupportedSchema.
+type UnsupportedPoolsError struct {
+	PoolIDs []string
+}
+
+// Error implements error and lists the skipped pool IDs in sorted order.
+func (e *UnsupportedPoolsError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+
+	ids := slices.Clone(e.PoolIDs)
+	slices.Sort(ids)
+
+	return "ipam: unsupported pools: " + strings.Join(ids, ", ")
+}
+
+// Unwrap returns ErrUnsupportedSchema.
+func (e *UnsupportedPoolsError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return ErrUnsupportedSchema
 }

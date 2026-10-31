@@ -4,10 +4,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -176,6 +178,16 @@ func (c *cli) poolCommand() *cobra.Command {
 				}
 
 				pools, err := client.ListPools(cmd.Context())
+
+				var unsupported *ipam.UnsupportedPoolsError
+				if errors.As(err, &unsupported) {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+						"ipam: warning: skipped pools with an unsupported schema (upgrade ipam): %s\n",
+						strings.Join(unsupported.PoolIDs, ", "))
+
+					err = nil
+				}
+
 				if err != nil {
 					return err
 				}
@@ -216,10 +228,11 @@ func (c *cli) poolCreateCommand() *cobra.Command {
 		parent       string
 		prefixLength int
 		meta         metadataFlags
+		policy       policyFlags
 	)
 
 	cmd := &cobra.Command{
-		Use:   "create <id> (--cidr CIDR... | --parent ID (--prefix-length N | --cidr CIDR))",
+		Use:   "create <id> (--cidr CIDR... | --parent ID (--prefix-length N | --cidr CIDR)) [--strategy S] [--cooldown D --cooldown-mode M]",
 		Short: "Create a root pool or carve a child pool from a parent",
 		Args:  cobra.ExactArgs(1),
 		RunE: c.leaf(func(cmd *cobra.Command, args []string) error {
@@ -231,6 +244,16 @@ func (c *cli) poolCreateCommand() *cobra.Command {
 			}
 
 			spec.Labels = labels
+
+			spec.Policy.Strategy, err = policy.parseStrategy(cmd)
+			if err != nil {
+				return err
+			}
+
+			spec.Policy.Cooldown, err = policy.parseCooldown(cmd)
+			if err != nil {
+				return err
+			}
 
 			prefixSet := cmd.Flags().Changed("prefix-length")
 
@@ -279,23 +302,49 @@ func (c *cli) poolCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&parent, "parent", "", "parent pool to carve this pool from")
 	cmd.Flags().IntVar(&prefixLength, "prefix-length", 0, "carve the next free CIDR of this prefix length from --parent")
 	meta.register(cmd)
+	policy.register(cmd)
 
 	return cmd
 }
 
 func (c *cli) poolUpdateCommand() *cobra.Command {
-	var meta metadataFlags
+	var (
+		meta       metadataFlags
+		policy     policyFlags
+		noCooldown bool
+	)
 
 	cmd := &cobra.Command{
-		Use:   "update <id> [--description TEXT] [--label k=v...]",
-		Short: "Update a pool's description or labels (--label replaces the whole label set)",
+		Use: "update <id> [--description TEXT] [--label k=v...] [--strategy S] " +
+			"[--cooldown D --cooldown-mode M | --no-cooldown]",
+		Short: "Update a pool's description, labels, strategy or cooldown (--label replaces the whole label set)",
 		Args:  cobra.ExactArgs(1),
 		RunE: c.leaf(func(cmd *cobra.Command, args []string) error {
-			if err := meta.requireChange(cmd); err != nil {
-				return err
+			flags := cmd.Flags()
+
+			cooldownSet := flags.Changed("cooldown") || flags.Changed("cooldown-mode")
+			metaChange := flags.Changed("description") || flags.Changed("label")
+			policyChange := flags.Changed("strategy") || cooldownSet || noCooldown
+
+			if noCooldown && cooldownSet {
+				return usagef("--no-cooldown cannot be combined with --cooldown or --cooldown-mode")
+			}
+
+			if !metaChange && !policyChange {
+				return usagef("nothing to update: pass --description, --label, --strategy, --cooldown with --cooldown-mode, or --no-cooldown")
 			}
 
 			labels, err := parseLabels(meta.labels)
+			if err != nil {
+				return err
+			}
+
+			strategy, err := policy.parseStrategy(cmd)
+			if err != nil {
+				return err
+			}
+
+			cooldown, err := policy.parseCooldown(cmd)
 			if err != nil {
 				return err
 			}
@@ -310,9 +359,29 @@ func (c *cli) poolUpdateCommand() *cobra.Command {
 				return err
 			}
 
-			description, labels := meta.merge(cmd, current.Description, current.Labels, labels)
-			if err := client.UpdatePoolMetadata(cmd.Context(), args[0], description, labels); err != nil {
-				return err
+			if policyChange {
+				merged := current.Policy
+
+				if flags.Changed("strategy") {
+					merged.Strategy = strategy
+				}
+
+				if noCooldown {
+					merged.Cooldown = ipam.Cooldown{}
+				} else if cooldownSet {
+					merged.Cooldown = cooldown
+				}
+
+				if err := client.UpdatePoolPolicy(cmd.Context(), args[0], merged); err != nil {
+					return err
+				}
+			}
+
+			if metaChange {
+				description, labels := meta.merge(cmd, current.Description, current.Labels, labels)
+				if err := client.UpdatePoolMetadata(cmd.Context(), args[0], description, labels); err != nil {
+					return err
+				}
 			}
 
 			updated, err := client.GetPool(cmd.Context(), args[0])
@@ -325,8 +394,73 @@ func (c *cli) poolUpdateCommand() *cobra.Command {
 	}
 
 	meta.register(cmd)
+	policy.register(cmd)
+	cmd.Flags().BoolVar(&noCooldown, "no-cooldown", false, "turn the cooldown off (not with --cooldown or --cooldown-mode)")
 
 	return cmd
+}
+
+// policyFlags holds the pool allocation-policy flags shared by pool create and
+// pool update.
+type policyFlags struct {
+	strategy     string
+	cooldown     string
+	cooldownMode string
+}
+
+func (p *policyFlags) register(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&p.strategy, "strategy", "",
+		"allocation strategy: best-fit (smallest free block that fits) or lowest (lowest address); "+
+			"default best-fit for new pools")
+	cmd.Flags().StringVar(&p.cooldown, "cooldown", "",
+		"hold released CIDRs back for this duration, e.g. 1h (whole seconds, 1s to 8760h); needs --cooldown-mode")
+	cmd.Flags().StringVar(&p.cooldownMode, "cooldown-mode", "",
+		"cooldown mode for next requests: strict (never reuse a cooling range) or fit-aware "+
+			"(avoid cooling ranges when an equally tight block exists); explicit CIDR requests bypass "+
+			"cooldown in both modes, including strict; needs --cooldown")
+}
+
+// parseStrategy returns the strategy given with --strategy, or the library
+// default when the flag was not passed.
+func (p *policyFlags) parseStrategy(cmd *cobra.Command) (ipam.AllocationStrategy, error) {
+	if !cmd.Flags().Changed("strategy") {
+		return ipam.StrategyDefault, nil
+	}
+
+	switch strategy := ipam.AllocationStrategy(p.strategy); strategy {
+	case ipam.StrategyBestFit, ipam.StrategyLowest:
+		return strategy, nil
+	default:
+		return "", usagef("invalid --strategy %q: want best-fit or lowest", p.strategy)
+	}
+}
+
+// parseCooldown returns the cooldown given with --cooldown and --cooldown-mode.
+// Passing only one of the two is a usage error; passing neither returns the
+// zero Cooldown.
+func (p *policyFlags) parseCooldown(cmd *cobra.Command) (ipam.Cooldown, error) {
+	durationSet := cmd.Flags().Changed("cooldown")
+	modeSet := cmd.Flags().Changed("cooldown-mode")
+
+	if durationSet != modeSet {
+		return ipam.Cooldown{}, usagef("--cooldown and --cooldown-mode must be passed together")
+	}
+
+	if !durationSet {
+		return ipam.Cooldown{}, nil
+	}
+
+	duration, err := time.ParseDuration(p.cooldown)
+	if err != nil {
+		return ipam.Cooldown{}, usagef("invalid --cooldown %q: want a duration such as 1h or 30m", p.cooldown)
+	}
+
+	switch mode := ipam.CooldownMode(p.cooldownMode); mode {
+	case ipam.CooldownStrict, ipam.CooldownFitAware:
+		return ipam.Cooldown{Mode: mode, Duration: duration}, nil
+	default:
+		return ipam.Cooldown{}, usagef("invalid --cooldown-mode %q: want strict or fit-aware", p.cooldownMode)
+	}
 }
 
 func (c *cli) allocCommand() *cobra.Command {

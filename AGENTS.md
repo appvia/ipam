@@ -49,7 +49,9 @@ Centrality unmeasured (gopls not used); roles from source.
 - `storage.ErrUnknownOutcome` (request may have landed): treat like a conflict but FIRST re-read and check whether our own write landed (allocation ID / incarnation / metadata equality). Never treat it as success or as a plain failure.
 - In-process per-pool mutex (`poolLock`) is only a contention optimisation; correctness must hold with `withoutPoolLocks()` (model tests run both ways).
 - Long-lived callers (Terraform provider, services): `WithMaxAttempts(0)` + `context.WithTimeout`; default 8 attempts can surface transient `pool_incomplete` on concurrent same-spec creates.
-- Documents carry `schema_version: 1`; any other value -> `ErrUnsupportedSchema`, missing -> invalid document. A new schema needs a new codec branch + `internal/document/testdata/*_v2.json`, never a silent reinterpretation.
+- Documents carry `schema_version` 1 or 2, chosen per document on every write; any other value -> `ErrUnsupportedSchema`, missing -> invalid document. Pool doc: v1 iff strategy is `lowest`, else v2 with `strategy`. Reservations doc: v1 iff no cooldown and no release records, else v2 with `cooldown` (`mode`, whole `seconds`) and `released` (CIDR -> expiry, writer's clock; expired records pruned on write). v1 bytes of lowest/no-cooldown pools must stay unchanged. A new schema needs a new codec branch + `internal/document/testdata/*_vN.json`, never a silent reinterpretation.
+- `UpdatePoolPolicy` = up to two non-atomic CAS writes (pool doc, then reservations doc); repeating the call completes a partial update. `--no-cooldown` clears all release records.
+- `ListPools` returns partial results plus `*UnsupportedPoolsError` for pools it can't decode.
 - Every file starts with the `Copyright 2026 Appvia Ltd.` / `SPDX-License-Identifier: Apache-2.0` header (goheader lint). `wsl_v5` is on: blank lines around blocks/returns.
 - Errors wrap with `%w` and keep sentinel identity; `errors.Join` for multi-cause.
 

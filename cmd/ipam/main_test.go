@@ -149,8 +149,8 @@ func assertKeys(t *testing.T, object map[string]any, want ...string) {
 }
 
 var (
-	poolKeys       = []string{"id", "family", "cidrs", "description", "labels"}
-	childPoolKeys  = []string{"id", "family", "cidrs", "parent", "description", "labels"}
+	poolKeys       = []string{"id", "family", "cidrs", "description", "labels", "strategy"}
+	childPoolKeys  = []string{"id", "family", "cidrs", "parent", "description", "labels", "strategy"}
 	allocationKeys = []string{"id", "pool_id", "cidr", "request", "description", "labels", "created_at"}
 )
 
@@ -431,7 +431,7 @@ func TestGenericErrorExitsOne(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doc := `{"schema_version":2,"id":"p"}`
+	doc := `{"schema_version":3,"id":"p"}`
 	if err := os.WriteFile(filepath.Join(dir, "pools", "p.json"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
