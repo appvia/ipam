@@ -517,6 +517,10 @@ func TestUnknownOutcomeWhenTheServerHangsPastTryTimeout(t *testing.T) {
 				case <-r.Context().Done():
 				case <-release:
 				}
+
+				// Returning would write an implicit 200 that can race the client's
+				// cancellation and be delivered; abort the connection instead.
+				panic(http.ErrAbortHandler)
 			}))
 			t.Cleanup(server.Close)
 			t.Cleanup(func() { close(release) })
