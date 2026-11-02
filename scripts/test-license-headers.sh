@@ -81,5 +81,21 @@ if [ "$(sed -n 11p edge.yml)" = '# SPDX-License-Identifier: Apache-2.0' ] && [ !
   ok "boundary: SPDX added after line-10 copyright, rerun no-op, check rc 0"
 else bad "boundary scenario"; cat edge.yml "$TMP/e.out" >&2; fi
 
+# (f) agentic-delivery synced files are skipped; other workflow files are still checked.
+mkdir -p .github/workflows .github/ISSUE_TEMPLATE .specify/presets/appvia
+printf 'name: agentic-relay\n' >.github/workflows/agentic-relay.yml
+printf 'name: Story\n' >.github/ISSUE_TEMPLATE/story.yml
+printf 'id: appvia\n' >.specify/presets/appvia/preset.yml
+printf 'name: other\n' >.github/workflows/other.yml
+git add .github .specify
+set +e
+"$HEADERS" --check >"$TMP/f.out" 2>&1
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] && grep -qF 'missing license header: .github/workflows/other.yml' "$TMP/f.out" &&
+  ! grep -qE 'agentic-relay|story.yml|preset.yml' "$TMP/f.out"; then
+  ok "synced: agentic-delivery files skipped, other workflow flagged"
+else bad "synced scenario (rc=$rc)"; cat "$TMP/f.out" >&2; fi
+
 echo "passed=$pass failed=$failures"
 [ "$failures" -eq 0 ]
