@@ -1,0 +1,42 @@
+name: Spike
+description: Time-boxed research (2 days at most) to remove an unknown before slicing.
+title: "[Spike] "
+type: Spike
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: "The unknown this Spike must answer."
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: "Why it matters, and the spec or Requirement it blocks."
+    validations:
+      required: true
+  - type: input
+    id: timebox
+    attributes:
+      label: Timebox
+      description: "At most 2 days."
+      placeholder: "2 days"
+    validations:
+      required: true
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: "Where the findings will be recorded: research.md in the spec folder or an ADR."
+    validations:
+      required: true
+  - type: input
+    id: parent
+    attributes:
+      label: Parent
+      description: "The Requirement or Feature issue this Spike supports."
+      placeholder: "#42"
+    validations:
+      required: false

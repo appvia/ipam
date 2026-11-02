@@ -1,0 +1,60 @@
+name: Story
+description: One vertical slice with testable acceptance criteria. One agent session, one repo, one pull request, size M or smaller.
+title: "[Story] "
+type: Story
+body:
+  - type: markdown
+    attributes:
+      value: "Every section is part of the contract with the implementer agent. Do not include real data, client identifiers or credentials."
+  - type: input
+    id: spec
+    attributes:
+      label: Spec
+      description: "Spec path and the AC-n ids this Story delivers."
+      placeholder: "specs/REQ-0042-tenant-self-service/spec.md - AC-3, AC-4"
+    validations:
+      required: true
+  - type: textarea
+    id: what-to-build
+    attributes:
+      label: What to build
+      description: "One paragraph, in terms of behaviour, not files."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: "One checklist line per AC, copied from the spec."
+      placeholder: "- [ ] AC-3: Given a tenant admin, when they invite a user, then ..."
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: "Contracts to honour, components not to touch, non-functional limits."
+    validations:
+      required: true
+  - type: textarea
+    id: test-expectations
+    attributes:
+      label: Test expectations
+      description: "Unit, integration or end-to-end tests that must prove each AC."
+    validations:
+      required: true
+  - type: textarea
+    id: hints
+    attributes:
+      label: Hints
+      description: "Likely files and modules, related ADRs."
+    validations:
+      required: false
+  - type: textarea
+    id: depends-on
+    attributes:
+      label: Depends on
+      description: "Issues that must be done first, or \"None\"."
+      placeholder: "#123, #124"
+    validations:
+      required: true
