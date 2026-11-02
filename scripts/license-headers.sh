@@ -25,6 +25,9 @@ esac
 prefix_for() {
   case "$1" in
     */testdata/* | docs/* | templates/*) ;;
+    # Synced from appvia/agentic-delivery (templates/), which owns their content.
+    .github/ISSUE_TEMPLATE/bug.yml | .github/ISSUE_TEMPLATE/feature.yml | .github/ISSUE_TEMPLATE/requirement.yml | \
+      .github/ISSUE_TEMPLATE/spike.yml | .github/ISSUE_TEMPLATE/story.yml | .github/workflows/agentic-relay.yml | .specify/*) ;;
     *.go) echo '//' ;;
     *.sh | *.tf | *.yml | *.yaml | *.toml | Makefile | .gitignore | .shellcheckrc) echo '#' ;;
   esac
