@@ -1,0 +1,5 @@
+# BEGIN agentic-delivery
+# Managed by appvia/agentic-delivery (repo-sync). Lines outside this block are yours.
+* @appvia/ipam-delivery
+specs/** @appvia/ipam-product-owners @appvia/ipam-tech-leads
+# END agentic-delivery

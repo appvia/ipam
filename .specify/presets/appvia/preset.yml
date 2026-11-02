@@ -1,0 +1,43 @@
+schema_version: "1.0"
+
+preset:
+  id: "appvia"
+  name: "Appvia spec-driven delivery"
+  version: "1.0.0"
+  description: "Appvia brief, spec, plan and tasks templates for the spec-driven agentic delivery pipeline"
+  author: "Appvia"
+  repository: "https://github.com/appvia/agentic-delivery"
+  license: "Proprietary"
+
+requires:
+  speckit_version: ">=1.2.5"
+
+provides:
+  templates:
+    - type: "template"
+      name: "brief-template"
+      file: "templates/brief-template.md"
+      description: "Business brief written before the spec (stage G1)"
+
+    - type: "template"
+      name: "spec-template"
+      file: "templates/spec-template.md"
+      description: "Feature spec with numbered AC-n criteria and measurable NFRs"
+      replaces: "spec-template"
+
+    - type: "template"
+      name: "plan-template"
+      file: "templates/plan-template.md"
+      description: "Technical design: components, contracts, rollout and risks"
+      replaces: "plan-template"
+
+    - type: "template"
+      name: "tasks-template"
+      file: "templates/tasks-template.md"
+      description: "Features, Stories and Enablers as yaml blocks (ADR-0004 tasks contract)"
+      replaces: "tasks-template"
+
+tags:
+  - "appvia"
+  - "agentic-delivery"
+  - "github-issues"

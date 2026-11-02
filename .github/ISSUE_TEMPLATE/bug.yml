@@ -1,0 +1,56 @@
+name: Bug
+description: A defect against an accepted spec. The fix starts with a failing regression test for the violated acceptance criterion.
+title: "[Bug] "
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: "A Bug must cite the acceptance criterion it violates. If no AC covers the behaviour, it is a spec gap, so raise a Requirement instead. Do not include real data, client identifiers or credentials."
+  - type: input
+    id: spec
+    attributes:
+      label: Spec
+      description: "The violated acceptance criterion as specs/<REQ-folder>/spec.md#AC-n."
+      placeholder: "specs/REQ-0042-tenant-self-service/spec.md#AC-3"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: "Numbered steps from a clean state, using synthetic data."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: "What the acceptance criterion says should happen."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: "What happens instead, with error messages or logs (redacted)."
+    validations:
+      required: true
+  - type: input
+    id: parent-feature
+    attributes:
+      label: Parent Feature
+      description: "The Feature issue, if you know it."
+      placeholder: "#57"
+    validations:
+      required: false
+  - type: dropdown
+    id: suggested-risk
+    attributes:
+      label: Suggested risk
+      description: "Security-relevant defects are always treated as high."
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true

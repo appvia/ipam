@@ -1,0 +1,35 @@
+name: Feature
+description: One coherent capability from an approved spec that can be released on its own. Usually created by the story-slicer.
+title: "[Feature] "
+type: Feature
+body:
+  - type: input
+    id: spec
+    attributes:
+      label: Spec
+      description: "Path to the spec and the acceptance criteria this Feature covers."
+      placeholder: "specs/REQ-0042-tenant-self-service/spec.md - AC-1, AC-2"
+    validations:
+      required: true
+  - type: textarea
+    id: capability
+    attributes:
+      label: Capability
+      description: "What users can do once this Feature is released."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: "The AC-n criteria from the spec, one per line."
+    validations:
+      required: true
+  - type: input
+    id: requirement
+    attributes:
+      label: Parent Requirement
+      description: "The Requirement issue this Feature belongs to."
+      placeholder: "#42"
+    validations:
+      required: true

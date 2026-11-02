@@ -82,3 +82,24 @@ GATE_CREATE_ITERATIONS=1000 go test -run TestCreatePoolRaceLocalLoop .
 - Cross-process tests re-exec the test binary via `IPAM_CROSS_PROCESS_WORKER`/`IPAM_CROSS_PROCESS_DIRECTORY` (root) and `IPAM_LOCAL_CROSS_PROCESS_DIR`/`IPAM_LOCAL_FRESH_DIR` (storage/local); do not set them by hand.
 - `.omo/` and `.codegraph/` are gitignored tooling state; the probe writes `.omo/evidence/emulators.json`.
 - `client_attempt*_test.go`, `client_gate_regression_test.go` are regression suites for past races; keep them when refactoring.
+
+<!-- BEGIN agentic-delivery -->
+This repository takes part in Appvia spec-driven agentic delivery. `appvia/agentic-delivery` manages the section between the markers through repo-sync; the rest of this file belongs to this repository.
+
+## How work arrives
+
+- Requirements become specs under `specs/` (in this repo or the product's spec repo). Specs are sliced into Story, Enabler and Bug issues in the repo that changes.
+- Each Story has seven sections: Spec, What to build, Acceptance criteria, Constraints, Test expectations, Hints, Depends on. Once planned, it also has an `## Implementation plan` with numbered todos and the F1 to F4 final verification rows.
+- One Story is one agent session and one pull request.
+
+## Rules for agents
+
+1. Follow `.specify/memory/constitution.md`.
+2. Follow the Implementation plan todo by todo. Copy the todo rows into the PR description and tick each one when its acceptance check passes.
+3. Prove each `AC-n` with a named test. A Bug fix starts with a failing regression test.
+4. Don't touch files, contracts or dependencies the plan lists under "Must NOT have". If the plan is wrong or incomplete, say so in the PR rather than improvise.
+5. The gh-aw implement workflow opens the ready pull request or updates the existing one after review. Agents never write closing keywords; the workflow supplies the Story reference. Never merge, approve reviews or add `gate:*` labels.
+6. Never commit real data, client identifiers or credentials.
+7. Pin dependencies to exact versions and actions to full commit SHAs.
+8. Use the skills in `.github/skills/` for stack conventions (build, test, lint commands).
+<!-- END agentic-delivery -->
