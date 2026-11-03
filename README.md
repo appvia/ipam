@@ -623,7 +623,9 @@ Each backend has a typed constructor, for callers that don't want URLs:
   tokens are fetched on first use.
 - `local.New(dir)` from `github.com/appvia/ipam/storage/local`. Uses a lock
   file and atomic renames; the directory must be on a local disk, not a
-  network file system.
+  network file system. Symbolic links inside the directory are not supported:
+  don't create them. Links that lead outside the directory are refused, and
+  any other link is skipped by `List`.
 - `memory.New()` from `github.com/appvia/ipam/storage/memory`, for tests.
 
 All of them implement `storage.Storage` (`Get`, `CreateIfAbsent`,
