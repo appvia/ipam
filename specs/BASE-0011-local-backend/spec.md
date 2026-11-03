@@ -84,7 +84,7 @@ A library caller receives recognizable invalid-key or filesystem-access errors, 
 - **AC-18**: **Given** `.lock` is a directory rather than a lock file, **When** a caller invokes `local.New`, **Then** construction returns an error and a nil store.
   - Evidence: `storage/local/lock_internal_test.go` `TestNewFailsWhenLockPathIsDirectory`
 
-- **AC-19**: Withdrawn (maintainer: directory-only key handling is a bug; see OQ-5)
+- **AC-19**: Withdrawn (maintainer: directory-only key handling is a bug; see appvia/ipam#40)
 
 - **AC-20**: **Given** an object and its current version, **When** a caller successfully replaces it with identical bytes, **Then** the returned version is identical to the previous version. A version identifies content, not a unique write or object incarnation.
   - Evidence: UNTESTED (behaviour in `storage/local/local.go` `PutIfMatch`, `check` and `versionOf`)
@@ -104,11 +104,11 @@ A library caller receives recognizable invalid-key or filesystem-access errors, 
 - **AC-25**: **Given** a process holds the store lock and then crashes, **When** another process uses the same directory without deleting or replacing `.lock`, **Then** the crashed process does not retain the lock; the operating system releases it, allowing other callers to proceed.
   - Evidence: UNTESTED (behaviour documented in `storage/local/local.go` package comment and implemented through `storage/local/lock_unix.go` `lockFile` and `storage/local/lock_windows.go` `lockFile`)
 
-- **AC-26**: Withdrawn (in-root symlinks are unsupported per maintainer; see OQ-3)
+- **AC-26**: Withdrawn (in-root symlinks are unsupported per maintainer; see Out of scope)
 
-- **AC-27**: Withdrawn (in-root symlinks are unsupported per maintainer; see OQ-3)
+- **AC-27**: Withdrawn (in-root symlinks are unsupported per maintainer; see Out of scope)
 
-- **AC-28**: Withdrawn (in-root symlinks are unsupported per maintainer; see OQ-3)
+- **AC-28**: Withdrawn (in-root symlinks are unsupported per maintainer; see Out of scope)
 
 - **AC-29**: **Given** a file symlink with an absolute target, even one pointing inside the store root, **When** a caller invokes `Get`, `PutIfMatch` or `DeleteIfMatch` using the symlink's key, **Then** the call fails with an error matching `local.ErrInvalidKey`; the underlying OS error is included only as text.
   - Evidence: UNTESTED (behaviour in `storage/local/local.go` `read`, `check` and `mapError`) (Unix hosts; Windows symlink behaviour unverified)
@@ -148,11 +148,8 @@ A library caller receives recognizable invalid-key or filesystem-access errors, 
 - Distributed or multi-host coordination, including guarantees on NFS, SMB, FUSE mounts or cloud-synchronized folders.
 - Safe coordination if an outside actor deletes or replaces `.lock` while a holder already owns it. The package documents that separate holders can then lose updates silently; detection after acquisition does not close that window.
 - Retained object versions, soft-delete recovery, unique version tokens for each write, and a guarantee of persistence through every crash or power-loss scenario. Directory synchronization is best effort.
+- Symbolic links inside the store directory, other than the escape protections in AC-12, AC-29 and AC-30: in-root symlinks are unsupported (maintainer decision, 2026-11-03; documented in the README by appvia/ipam#25), so key-based access through them is not part of this contract.
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: `storage/local/local.go` `locked` checks the context only before acquisition, and the blocking calls in `storage/local/lock_unix.go` `lockFile` and `storage/local/lock_windows.go` `lockFile` do not consume a context. An operation that began with a live context can therefore keep waiting after cancellation or expiry and mutate after acquiring the lock. Maintainer answer: this is a bug; waiting for the lock should honour cancellation. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-2**: `storage/local/local.go` `List` descends into externally introduced directories whose names begin with `.ipam-tmp-` before applying its temporary-basename filter, so it can return an ordinary child such as `.ipam-tmp-stale/item` even though the key-based operations reject that key. Maintainer answer: this is a bug; `List` should skip them. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-3**: In-root relative file symlinks currently permit `Get`, `PutIfMatch` and `DeleteIfMatch` while their keys are absent from `List`. Maintainer answer: in-root symlinks are unsupported; no AC covers key-based access through them. Remove this entry once the unsupported status is documented.
-- **OQ-4**: Should operations on a key beneath an existing object, such as `tenant-a/item` when `tenant-a` is an object file, follow the BASE-0010 storage-contract missing-key rule instead of returning a generic filesystem error? `Get`, `PutIfMatch`, `DeleteIfMatch` and `CreateIfAbsent` currently return a wrapped "not a directory" error matching neither `storage.ErrNotFound` nor `storage.ErrPreconditionFailed`: `storage/local/local.go` `mapError` leaves `ENOTDIR` in its default branch. Maintainer answer (2026-11-03): this is a bug; such operations should follow the BASE-0010 missing-key rule. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-5**: A key that exists only as a directory, including an empty parent left by `DeleteIfMatch`, is absent from `List` and returns `storage.ErrNotFound` from `Get`, `PutIfMatch` and `DeleteIfMatch`, but `CreateIfAbsent` returns `storage.ErrPreconditionFailed`, leaving the key uncreatable. Maintainer answer (2026-11-03): this is a bug. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#9, appvia/ipam#38, appvia/ipam#39, appvia/ipam#40.

@@ -245,9 +245,8 @@ AC-3 defines alternate environment names and their precedence. Emulator shared-k
 - Azure Data Lake Gen2 hierarchical-namespace accounts are documented as unsupported. The separate `ipam doctor` CLI diagnostic reports a known HNS account as a failing check, but this backend does not reject it; see BASE-0015 cli-doctor.
 - Defining the external authentication library's source ordering or guaranteeing that supplied credentials can acquire a token. The backend configures the supported sources and fetches tokens on use rather than during construction.
 - CLI command formatting, diagnostic exit codes, IPAM pool and allocation behavior, emulator startup and probe tooling.
+- Refusing HNS-enabled accounts when the backend opens. AC-56 records today's behaviour; the maintainer has adopted refusing them at open as the intended direction, tracked in appvia/ipam#19, which will update AC-56 when it lands.
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: Direct `azblob.New` errors can echo the supplied account URL or credentials through scheme/host validation of plain-HTTP or hostless URLs before SAS-query or user-information checks, wrapped URL parse errors, and emulator connection-string endpoint mismatch errors. Sources: `storage/azblob/azblob.go` `validateAccountURL`, `newClients`. Maintainer answer (2026-11-03): this is a bug; error text must not echo the account URL or credentials. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-2**: A successful create or replacement response without an ETag currently returns an error that does not match `storage.ErrUnknownOutcome`. Source: `storage/azblob/azblob.go` `Store.upload`; no covering test was found. Maintainer answer (2026-11-03): this is a bug. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#42, appvia/ipam#43, appvia/ipam#19.

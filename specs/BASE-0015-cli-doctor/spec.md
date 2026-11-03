@@ -166,5 +166,4 @@ As a pool operator, I inspect each pool's fragmentation row to distinguish free 
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: `cmd/ipam/doctor.go` `probeWrite` re-submits previously read reservations bytes; a backend that ignores conditional writes can change the document version or overwrite a concurrent update. Maintainer answer (2026-11-03): this is a bug; doctor must not risk changing data. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-2**: `--expect-write` and `--expect-no-write` accept some invalid pool IDs, such as `Pool-A`; when the reservations document is absent and no other check fails, doctor reports `WARN` and exits `0`. Source: `cmd/ipam/doctor.go` `writeExpectations`, `probeWrite`. Maintainer answer (2026-11-03): this is a bug; invalid pool IDs must be rejected as a usage error. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#45, appvia/ipam#46.

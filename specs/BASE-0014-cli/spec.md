@@ -243,4 +243,4 @@ The command surface is:
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: A combined `pool update` can leave a policy change applied when the metadata update fails. Maintainer answer (2026-11-03): this is a bug. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#44.

@@ -166,12 +166,11 @@ As a library caller or storage operator, I want a document with an unsupported v
 - Allocation strategy choices, cooldown duration limits, expiry decisions, clock behaviour and pruning release records: see BASE-0002 allocation-policy.
 - Allocation selection, containment, overlap, exhaustion, idempotency, release and metadata operations: see BASE-0003 allocations.
 - CAS, retries, unknown-outcome recovery and contention: see BASE-0004 concurrency-and-retry.
-- General pool ID, allocation ID and CIDR validation rules: see BASE-0005 input-validation. This spec covers their application at the stored-document boundary only. No description or label constraints exist yet; see BASE-0005 input-validation OQ-1 for the maintainer's answer.
+- General pool ID, allocation ID and CIDR validation rules: see BASE-0005 input-validation. This spec covers their application at the stored-document boundary only. No description or label constraints exist yet; the maintainer decided metadata should be limited (appvia/ipam#47).
 - Error type structure, operation context and general error text: see BASE-0006 error-contract. This spec identifies the document conditions producing those errors.
 - Object-storage transport, ETags, listing semantics and backend durability: see BASE-0010 storage-contract and BASE-0011 through BASE-0013 for backend-specific behaviour.
 - A public document-codec API, a bulk schema migration command, or preservation of unrecognised JSON fields. Versions are selected when each document is serialized; this capability does not upgrade all documents together.
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: The reader accepts a release record with a parseable zero-valued expiry such as `0001-01-01T00:00:00Z`, but the writer rejects it. Maintainer answer (2026-11-03): this is a bug. The reader should reject release records with zero-valued expiry times, matching the writer. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-2**: `document.go` `decodePoolDocument` masks a stored pool CIDR with host bits set (for example, `10.0.0.1/16` becomes `10.0.0.0/16`) and accepts `family: 0`, inferring the family from the CIDRs. IPv4-mapped prefixes are unmapped (for example, `::ffff:10.0.0.0/112` becomes `10.0.0.0/16`), and unsorted CIDR lists are reordered. In contrast, stored allocation and release CIDRs must already be canonical or reading fails (AC-27 and AC-31). Maintainer answer (2026-11-03, baseline-spec run): this lenient pool-side reading is a bug; stored pool CIDRs and family should be validated as strictly as allocation CIDRs. No AC treats these pool-side normalizations as the contract. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#31, appvia/ipam#32.

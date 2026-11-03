@@ -85,7 +85,7 @@ As a library caller using `ListAllocations(ctx, poolID)` to read a pool's reserv
 
 - **AC-19**: Withdrawn (covered by BASE-0007 document-format AC-36)
 
-- **AC-20**: **Given** an otherwise valid pool specification containing only disjoint IPv6 CIDRs, **When** a caller supplies the specification to `CreatePool`, **Then** it accepts, masks and sorts the CIDRs, and the returned pool has family `6`. Stored-pool normalization is tracked separately in BASE-0007 document-format OQ-2.
+- **AC-20**: **Given** an otherwise valid pool specification containing only disjoint IPv6 CIDRs, **When** a caller supplies the specification to `CreatePool`, **Then** it accepts, masks and sorts the CIDRs, and the returned pool has family `6`. Stored-pool normalization is tracked separately in appvia/ipam#32 (BASE-0007 document-format).
   - Evidence: UNTESTED (behaviour in `canonical.go` `canonicalPool`)
 
 - **AC-21**: Withdrawn (covered by BASE-0007 document-format AC-24)
@@ -148,4 +148,4 @@ As a library caller using `ListAllocations(ctx, poolID)` to read a pool's reserv
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: The assigned canonicalisation and validation code currently imposes no description or label constraints, despite metadata rules being named in the capability description. BASE-0001 pool-lifecycle AC-4 records preservation of supplied values, not a guarantee of unrestricted metadata. Maintainer answer (2026-11-03, baseline-spec run): metadata should be limited; a Bug or Story citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#47.

@@ -113,7 +113,7 @@ Address-width boundaries are functional criteria above. Retry, cancellation, and
 - Pool creation, deletion, child relationships, usable pool state, incarnation pairing, and residue handling: see BASE-0001 pool-lifecycle.
 - Choosing lowest-address or best-fit placement, release cooldown records and expiry, explicit-request cooldown bypass, and policy updates: see BASE-0002 allocation-policy.
 - CAS coordination, retry and backoff settings, attempt exhaustion, cancellation during retries, generated-ID stability across retries, and recovery after an unknown write outcome: see BASE-0004 concurrency-and-retry.
-- Pool and allocation ID grammar, UUIDv7 generation rules, and CIDR normalization: see BASE-0005 input-validation. No description or label validation rules exist yet; see BASE-0005 input-validation OQ-1 for the maintainer's answer. This spec records allocation-specific selector and pool-containment behavior.
+- Pool and allocation ID grammar, UUIDv7 generation rules, and CIDR normalization: see BASE-0005 input-validation. No description or label validation rules exist yet; the maintainer decided metadata should be limited (appvia/ipam#47). This spec records allocation-specific selector and pool-containment behavior.
 - Sentinel identities, allocation-specific failure reasons, operation error structure and formatting, and safe error text: see BASE-0006 error-contract. This spec states the conditions and outcomes of allocation failures and references the error contract for their reason strings and sentinel identities.
 - Storage keys, document schemas, unsupported-schema rejection, and JSON compatibility: see BASE-0007 document-format.
 - Pool utilisation and fragmentation reporting: see BASE-0008 pool-stats. This capability allocates CIDRs, not individual usable-host lists or routing configuration.
@@ -121,5 +121,4 @@ Address-width boundaries are functional criteria above. Retry, cancellation, and
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: See BASE-0004 concurrency-and-retry OQ-1: `GetAllocation` and `ListAllocations` skip client validation; the maintainer answered that this is a bug (2026-11-03). Remove this pointer when that Bug is raised.
-- **OQ-2**: See BASE-0005 input-validation OQ-1 for the absence of description and label constraints and the maintainer's answer that metadata should be limited; a Bug or Story is to be raised after merge.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#28, appvia/ipam#47.

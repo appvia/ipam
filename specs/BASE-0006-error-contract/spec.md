@@ -119,7 +119,7 @@ For pool lifecycle, allocation policy and allocation error conditions, this spec
 - **AC-29**: **Given** an operation has exhausted its attempts because of conditional-write contention rather than repeated incarnation mismatches or the pool-creation failures in AC-26 and AC-28 (see BASE-0004 concurrency-and-retry), **When** the caller inspects the final error, **Then** `OpError.Reason` is `contention`, `errors.Is` matches `ErrConflict`, and the last attempt's underlying error remains in the chain.
   - Evidence: `client_test.go` `TestAllocatePermanentPreconditionUsesExactlyMaxAttempts` checks the reason and `ErrConflict` identity; retention of the last attempt's underlying error is UNTESTED (behaviour in `client.go` `contentionError`).
 
-- **AC-30**: Withdrawn (maintainer confirmed the read-path `validate`/`incarnation_mismatch`/`ErrConflict` result for mismatched incarnations is a bug; see Open questions).
+- **AC-30**: Withdrawn (maintainer confirmed the read-path `validate`/`incarnation_mismatch`/`ErrConflict` result for mismatched incarnations is a bug; tracked in appvia/ipam#30).
 
 - **AC-31**: **Given** child-pool creation is rejected because only cooling space in its parent fits the requested prefix length (see BASE-0001 pool-lifecycle and BASE-0002 allocation-policy), **When** the caller inspects the error, **Then** the outer `OpError` has `Op` equal to `create pool`, `Pool` equal to the child pool identifier, an empty `ID`, and `Reason` equal to `cooldown`, and `errors.Is` matches `ErrPoolExhausted`.
   - Evidence: `cooldown_test.go` `TestCooldownChildCreateUsesParentPolicy` through `assertCooldownError`.
@@ -166,4 +166,4 @@ For pool lifecycle, allocation policy and allocation error conditions, this spec
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: Observed behaviour: for mismatched incarnations in the pool document and reservations document, `GetAllocation`, `ListAllocations` and `PoolStats` return `ErrConflict` with `OpError.Op` equal to `validate` and `Reason` `incarnation_mismatch` (`allocation.go` `readPoolState`, `stats.go` `PoolStats`, `validate.go` `validate`), while the retrying operations in AC-27 eventually return `ErrNotFound` with reason `pool_incomplete` and their public operation label. Maintainer answer (2026-11-03, baseline-spec run): this split is a bug; AC-30 is withdrawn. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#30.

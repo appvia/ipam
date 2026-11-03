@@ -52,7 +52,7 @@ As a backend implementer, I provide a factory for isolated stores to the reusabl
 - **AC-6**: **Given** stored keys both inside and outside a requested prefix, **When** a caller invokes `List`, **Then** it returns only matching keys in ascending string order, retaining the requested prefix in each returned key.
   - Evidence: `storage/memory/memory_test.go` `TestMemoryContract/list returns matching keys in sorted order` (defined in `storage/storagetest/contract.go` `RunWithOptions`).
 
-- **AC-7**: **Given** an in-memory store used through `storage.Inspector`, **When** a caller invokes `Inspect`, **Then** it succeeds and reports `HierarchicalNamespace: storage.No`. (Its `Versioning` and `SoftDelete` values are not part of this contract; see OQ-1.)
+- **AC-7**: **Given** an in-memory store used through `storage.Inspector`, **When** a caller invokes `Inspect`, **Then** it succeeds and reports `HierarchicalNamespace: storage.No`. (Its `Versioning` and `SoftDelete` values are not part of this contract; see appvia/ipam#37.)
   - Evidence: `storage/memory/inspect_test.go` `TestInspectReportsNoDataProtection` (asserts the hierarchical-namespace value among others).
 
 - **AC-8**: **Given** a context without an access-propagation retry marker, **When** a caller queries `storage.AccessPropagationRetry`, **Then** the result is false.
@@ -156,4 +156,4 @@ As a backend implementer, I provide a factory for isolated stores to the reusabl
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: Observed behaviour: in-memory `Inspect` reports `storage.Unknown` rather than `storage.No` for versioning and soft delete, although the store retains nothing, so `ipam doctor` prints "unknown" for `mem://` (`storage/memory` `Inspect`; `TestInspectReportsNoDataProtection` currently asserts `Unknown`). Maintainer answer (2026-11-03, baseline-spec run): this is a bug; it should report `No`. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#37.

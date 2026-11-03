@@ -93,7 +93,7 @@ A library caller inspects the cooling count and current cooldown policy alongsid
 - **AC-21**: **Given** an unused IPv6 `::/0` pool and reference length `64`, **When** a caller requests statistics, **Then** `Total` and `Free` each represent exactly `2^128` addresses, `Allocatable` and `Capacity` each represent exactly `2^64` subnets and `Largest` is `::/0`.
   - Evidence: `internal/alloc/stats_test.go` `TestStatsIPv6Whole`
 
-- **AC-22**: **Given** a statistics request that fails client validation or cannot load usable pool state, **When** the request fails, **Then** the call returns the validation or state-read error and a zero-value statistics result rather than successful partial statistics, without retrying; the incarnation-mismatch error is recorded as a bug in [BASE-0006 error-contract](../BASE-0006-error-contract/spec.md) OQ-1, and schema handling is specified in [BASE-0007 document-format](../BASE-0007-document-format/spec.md).
+- **AC-22**: **Given** a statistics request that fails client validation or cannot load usable pool state, **When** the request fails, **Then** the call returns the validation or state-read error and a zero-value statistics result rather than successful partial statistics, without retrying; the incarnation-mismatch error is a known bug tracked in appvia/ipam#30 (see [BASE-0006 error-contract](../BASE-0006-error-contract/spec.md)), and schema handling is specified in [BASE-0007 document-format](../BASE-0007-document-format/spec.md).
   - Evidence: UNTESTED (behaviour in `stats.go` `Client.PoolStats`)
 
 - **AC-23**: **Given** a usable pool and an out-of-range reference length as in AC-17, **When** statistics calculation rejects the reference, **Then** the error is an `*OpError` with `Op = "stats"` and the requested `Pool` ID, and matches `ErrInvalidArgument`; calculation errors matching `ErrInvalidCIDR` receive the same wrapping and preserve that public sentinel, but that branch is effectively unreachable after pool validation accepts the data.
@@ -119,7 +119,7 @@ A library caller inspects the cooling count and current cooldown policy alongsid
 
 - Creating, listing, updating or deleting pools, validating their CIDR collections, pairing pool incarnations and handling incomplete pool residue: see [BASE-0001 pool-lifecycle](../BASE-0001-pool-lifecycle/spec.md).
 - Creating, retrieving, listing, releasing or updating allocations, and deciding whether an allocation succeeds: see [BASE-0003 allocations](../BASE-0003-allocations/spec.md).
-- Read-failure error identities, including the incarnation-mismatch bug: see [BASE-0006 error-contract](../BASE-0006-error-contract/spec.md) OQ-1.
+- Read-failure error identities, see [BASE-0006 error-contract](../BASE-0006-error-contract/spec.md); the incarnation-mismatch bug is tracked in appvia/ipam#30.
 - Document schema versions and unsupported-schema handling: see [BASE-0007 document-format](../BASE-0007-document-format/spec.md).
 - `ipam doctor` command output, warning thresholds, backend checks, write probes and exit codes: see [BASE-0015 cli-doctor](../BASE-0015-cli-doctor/spec.md).
 - Reserving the reported capacity, compacting or relocating allocations, changing policy or persisting cleanup of cooling records. Statistics are read-only measurements, not allocation guarantees.
@@ -128,5 +128,4 @@ A library caller inspects the cooling count and current cooldown policy alongsid
 
 ## Open questions *(mandatory, empty before G2)*
 
-- None identified within the assigned source and tests.
-
+- None.

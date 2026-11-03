@@ -111,7 +111,7 @@ As a caller handling configuration errors, I identify invalid arguments with `er
 - **AC-27**: **Given** either Azure URL form with any query, including a bare `?` or SAS parameters, **When** a caller invokes `OpenStorage`, **Then** the call fails with `ErrInvalidArgument` even if an otherwise usable credential source or emulator connection string is configured.
   - Evidence: `open_test.go` `TestOpenAzureContainerFormRejectsEmptyQueryWithEmulator`, `TestOpenAzureContainerFormRejectsSecretQueryWithEmulator`, `TestOpenAzureAccountFormRejectsQueryWithCredentialSource`.
 
-- **AC-28**: **Given** a doubled path separator anywhere in a nonempty directory, prefix, or Azure account-form container path, including at its end, such as `file:///tmp//data`, `s3://bkt/a//`, or `azblob://acct.blob.core.windows.net/cnt//`, **When** a caller invokes `OpenStorage`, **Then** the call fails with `ErrInvalidArgument`. The empty-prefix bug recorded in OQ-2 is excluded from this criterion.
+- **AC-28**: **Given** a doubled path separator anywhere in a nonempty directory, prefix, or Azure account-form container path, including at its end, such as `file:///tmp//data`, `s3://bkt/a//`, or `azblob://acct.blob.core.windows.net/cnt//`, **When** a caller invokes `OpenStorage`, **Then** the call fails with `ErrInvalidArgument`. The empty-prefix bug recorded in appvia/ipam#34 is excluded from this criterion.
   - Evidence: `open_test.go` `TestOpenRejectsInvalidURLs` / `file double slash`, `s3 double slash`, `azblob double slash`; `open_message_test.go` `TestOpenEmptySegmentMessageIsActionable` / `file trailing slash variable`, `s3 double slash`, `azblob double slash`; UNTESTED for a doubled separator at the end (behaviour in `open.go` `blobPath`).
 
 - **AC-29**: **Given** a backend path containing a `.` or `..` segment, including percent-encoded traversal, **When** a caller invokes `OpenStorage`, **Then** the call fails with `ErrInvalidArgument` rather than resolving the traversal.
@@ -135,7 +135,7 @@ As a caller handling configuration errors, I identify invalid arguments with `er
 - **AC-35**: **Given** a file or memory URL ending with a bare `?`, **When** a caller invokes `OpenStorage`, **Then** the call fails with `ErrInvalidArgument` even though the query has no contents.
   - Evidence: UNTESTED (behaviour in `open.go` `parseFile`, `parseMem`).
 
-- **AC-36**: **Given** a syntactically valid file URL whose local backend constructor fails, **When** a caller invokes `OpenStorage`, **Then** the failure preserves the constructor error's identity rather than being classified automatically as `ipam.ErrInvalidArgument`. This criterion excludes error-text behavior, including the path-echo bug recorded in OQ-5.
+- **AC-36**: **Given** a syntactically valid file URL whose local backend constructor fails, **When** a caller invokes `OpenStorage`, **Then** the failure preserves the constructor error's identity rather than being classified automatically as `ipam.ErrInvalidArgument`. This criterion excludes error-text behavior, including the path-echo bug recorded in appvia/ipam#36.
   - Evidence: UNTESTED (behaviour in `open.go` `OpenStorage`).
 
 - **AC-37**: **Given** a backend URL that fails to open, **When** a caller invokes `Open` rather than `OpenStorage`, **Then** it returns no client and propagates the opening error unchanged.
@@ -150,11 +150,12 @@ As a caller handling configuration errors, I identify invalid arguments with `er
 - **AC-40**: **Given** otherwise valid S3 configuration, **When** the backend URL ends in a bare `?`, **Then** URL validation accepts it as having no S3 query settings.
   - Evidence: UNTESTED (behaviour in `open.go` `parseS3`).
 
-- **AC-41**: Withdrawn (maintainer: current behaviour is a bug; see OQ-1)
+- **AC-41**: Withdrawn (maintainer: current behaviour is a bug; see appvia/ipam#33)
 
-- **AC-42**: Withdrawn (maintainer: current behaviour is a bug; see OQ-2)
+- **AC-42**: Withdrawn (maintainer: current behaviour is a bug; see appvia/ipam#34)
 
-- **AC-43**: Withdrawn (maintainer: current behaviour is a bug; see OQ-4)
+- **AC-43**: **Given** a supported scheme written in any letter case, such as `MEM://`, `File:///tmp/data` or `S3://bkt`, **When** a caller invokes `OpenStorage`, **Then** the URL is handled exactly as its lowercase-scheme form, because URI schemes are case-insensitive (RFC 3986 section 3.1); host, path and query rules are unchanged.
+  - Evidence: UNTESTED (behaviour in `open.go` `parseOpenURL`, which switches on `url.URL.Scheme`; Go's `net/url` lowercases the scheme while parsing)
 
 - **AC-44**: **Given** a URL that cannot be parsed, such as `s3://bkt/%zz` with an invalid percent escape in its path, **When** a caller invokes `OpenStorage`, **Then** the call fails with `ErrInvalidArgument` and the explanation `URL is malformed`.
   - Evidence: UNTESTED (behaviour in `open.go` `parseOpenURL`).
@@ -170,7 +171,7 @@ As a caller handling configuration errors, I identify invalid arguments with `er
 - **AC-48**: **Given** either an Azure account-form or container-form URL whose host carries a port, including `azblob://cnt:10000/p`, **When** a caller invokes `OpenStorage`, **Then** URL validation fails with `ErrInvalidArgument` and the explanation `azblob host must not carry a port`.
   - Evidence: UNTESTED for container-form ports and the explanation (behaviour in `open.go` `parseAzblob`); tested account-form rejection: `open_test.go` `TestOpenRejectsInvalidURLs` / `azblob account with port`.
 
-- **AC-49**: **Given** any URL rejected by URL validation, **When** the caller reads the error, **Then** its text has the form `ipam: invalid argument: <reason>`, where the reason is fixed and may name the backend type (`s3`, `azblob`, `file`, `mem`) but copies no text from the URL's host, bucket, container, path, or query. Backend-construction failures are excluded, including the file-backend path-echo bug in OQ-5; AC-12 and AC-36 cover those failures.
+- **AC-49**: **Given** any URL rejected by URL validation, **When** the caller reads the error, **Then** its text has the form `ipam: invalid argument: <reason>`, where the reason is fixed and may name the backend type (`s3`, `azblob`, `file`, `mem`) but copies no text from the URL's host, bucket, container, path, or query. Backend-construction failures are excluded, including the file-backend path-echo bug in appvia/ipam#36; AC-12 and AC-36 cover those failures.
   - Evidence: UNTESTED for the general fixed-reason and no-URL-echo guarantee (behaviour in `open.go` `invalidURL` and the URL validators); tested secret-marker omissions: `open_test.go` `TestOpenRejectsInvalidURLs` / `s3 user info`, `s3 secret parameter`, `s3 malformed query`, `s3 fragment`; tested empty-segment host/path omissions: `open_message_test.go` `TestOpenEmptySegmentMessageIsActionable` / `file trailing slash variable`, `s3 double slash`, `azblob double slash`.
 
 ## Non-functional requirements *(mandatory)*
@@ -199,8 +200,4 @@ As a caller handling configuration errors, I identify invalid arguments with `er
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: `mem:` and `file:/abs/dir` are accepted even though the documented forms are `mem://` and `file:///absolute/path`, and the generic rejection reason asks for `scheme://...`. Maintainer answer (2026-11-03): Bug; both `mem:` and single-slash file URLs such as `file:/abs/dir` without `//` should be rejected. AC-41 is withdrawn; no AC specifies the accepted single-slash file URL behaviour. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-2**: Exactly `s3://bkt//` and `azblob://cnt//` are accepted as an empty prefix, while `s3://bkt/a//` and the account-form `azblob://acct.blob.core.windows.net/cnt//` are rejected for empty segments. Maintainer answer (2026-11-03): Bug; the bare doubled-separator forms should be rejected. AC-42 is withdrawn. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-3**: An S3 endpoint ending in a bare `?` is accepted, although its rejection reason says endpoints must be without a query. Maintainer answer (2026-11-03): Bug; an endpoint with an empty query marker should be rejected. AC-39 is narrowed to endpoint paths without a query marker. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-4**: Supported schemes are accepted in any letter case, including `MEM://` and `S3://`, even though the documented forms are lowercase. Maintainer answer (2026-11-03): Bug; schemes should require lowercase. AC-43 is withdrawn. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-5**: File-backend construction errors can echo the local directory path from the URL, despite the `OpenStorage` comment saying error text never echoes the URL. Maintainer answer (2026-11-03): Bug; these errors should use a fixed reason instead of echoing the path. AC-36 preserves error identity only and does not guarantee error text; AC-49 excludes backend-construction failures. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#33, appvia/ipam#34, appvia/ipam#35, appvia/ipam#36.

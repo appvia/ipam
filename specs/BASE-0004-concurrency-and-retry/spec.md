@@ -70,7 +70,7 @@ As an integrator or test author, I supply a clock, allocation ID generator, entr
 ### Edge cases
 
 - **AC-12**: **Given** a nil client, a client with no storage backend, or a client configured with a negative maximum-attempt count, **When** a caller invokes `CreatePool`, `GetPool`, `ListPools`, `UpdatePoolMetadata`, `UpdatePoolPolicy`, `DeletePool`, `Allocate`, `Release` or `UpdateAllocationMetadata`, **Then** it fails with `ErrInvalidArgument`; `New` itself does not return a construction-time validation error.
-  - Evidence: UNTESTED (`client.go` `validateClient`, `WithMaxAttempts` and `New`; validation calls in the listed methods in `pool.go` and in `allocation.go` `allocateWithStatus`, `release` and `UpdateAllocationMetadata`). The allocation-reader inconsistency is recorded in OQ-1.
+  - Evidence: UNTESTED (`client.go` `validateClient`, `WithMaxAttempts` and `New`; validation calls in the listed methods in `pool.go` and in `allocation.go` `allocateWithStatus`, `release` and `UpdateAllocationMetadata`). The allocation-reader inconsistency is recorded in appvia/ipam#28.
 
 - **AC-13**: **Given** a backoff base or cap that is zero or negative, **When** a retry wait is requested with a live context, **Then** the sleeper is called with a zero-duration delay without reading jitter entropy.
   - Evidence: UNTESTED (behaviour in `client.go` `waitRetry`).
@@ -180,7 +180,7 @@ As an integrator or test author, I supply a clock, allocation ID generator, entr
 - **AC-48**: **Given** either policy-write phase reports `storage.ErrUnknownOutcome`, **When** confirmation does not establish both the requested phase value and the original incarnation, including a failed confirmation read or decode, **Then** the client waits and starts a fresh attempt of that phase if the budget permits; on the final allowed attempt it instead returns the exhaustion error specified by BASE-0006 error-contract AC-29. A later fresh attempt still rejects a replacement incarnation under AC-24; any partial-update error context follows BASE-0002 allocation-policy.
   - Evidence: UNTESTED (`pool.go` `updatePoolStrategy`, `updatePoolCooldown`, `retryPolicyWrite` and `UpdatePoolPolicy`; `client.go` `contentionError`). `updatepolicy_test.go` `TestUpdatePoolPolicyUnknownOutcome` / `strategy dropped` and `cooldown dropped` assert eventual success after one uncommitted unknown outcome, but do not assert exhaustion.
 
-- **AC-49**: Withdrawn (maintainer confirmed the observed precondition-before-unknown-outcome ordering in DeletePool is a bug; see OQ-2).
+- **AC-49**: Withdrawn (maintainer confirmed the observed precondition-before-unknown-outcome ordering in DeletePool is a bug; see appvia/ipam#29).
 
 - **AC-50**: **Given** a prefix-length allocation request that read pool state before its pool was deleted and recreated with sufficient capacity, **When** the request resumes with attempts remaining and a live context, **Then** it retries and succeeds with a CIDR inside the replacement pool rather than the deleted pool.
   - Evidence: `client_lifecycle_test.go` `TestPoolIncarnationPreventsABAOnMemoryAndLocal` / `memory` and `local`.
@@ -226,7 +226,4 @@ As an integrator or test author, I supply a clock, allocation ID generator, entr
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: Observed behaviour: with valid lookup arguments, `GetAllocation` and `ListAllocations` panic for a nil client or an absent storage backend, and a negative maximum-attempt count alone does not cause them to return `ErrInvalidArgument` (`allocation.go` `GetAllocation`, `ListAllocations` and `readPoolState`). Maintainer answer (2026-11-03): this is a bug. Both readers should validate the client like the methods in AC-12, returning `ErrInvalidArgument` rather than panicking for a nil client or absent storage, and returning `ErrInvalidArgument` for a negative maximum-attempt count. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-
-- **OQ-2**: Observed behaviour: when a document deletion error matches both `storage.ErrUnknownOutcome` and `storage.ErrPreconditionFailed` but does not also match `storage.ErrNotFound`, `DeletePool` skips the unknown-outcome confirmation read, retries if attempts remain, and otherwise returns `contention` even if the deletion landed (`pool.go` `deletePoolDocument` and `DeletePool`; AC-49). Maintainer answer (2026-11-03, baseline-spec run): this is a bug; DeletePool should confirm an unknown outcome before treating the error as a precondition failure. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#28, appvia/ipam#29.

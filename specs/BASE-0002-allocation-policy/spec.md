@@ -188,7 +188,7 @@ without replacing the pool or its live allocations.
 - Pool creation, listing, metadata, deletion, incarnation pairing and child lifecycle beyond their policy effects: see BASE-0001 pool-lifecycle.
 - Allocation identity, containment, live overlap, general replay semantics, metadata and general release behaviour: see BASE-0003 allocations.
 - Retry budgets, backoff, client clock configuration, concurrent-writer correctness and the general unknown-outcome recovery contract: see BASE-0004 concurrency-and-retry.
-- General pool ID, CIDR and UUID validation: see BASE-0005 input-validation. No description or label validation rules exist yet; see BASE-0005 input-validation OQ-1 for the maintainer's decision.
+- General pool ID, CIDR and UUID validation: see BASE-0005 input-validation. No description or label validation rules exist yet; the maintainer decided metadata should be limited (appvia/ipam#47).
 - General sentinel and `OpError` contracts: see BASE-0006 error-contract.
 - Stored keys, JSON field layouts, schema versions, byte compatibility, and malformed release-record decoding: see BASE-0007 document-format.
 - Pool utilisation and fragmentation reporting: see BASE-0008 pool-stats.
@@ -199,4 +199,4 @@ without replacing the pool or its live allocations.
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: A valid reservations document can contain release records with cooldown already disabled (`policy_test.go` `TestPolicyReservationsReleaseRecordsRoundTrip`). In `pool.go` `updatePoolCooldown`, an unchanged cooldown returns success before clearing or pruning those records. Maintainer answer (2026-11-03, baseline-spec run): leaving the records is a bug; requesting no cooldown should clear them. A Bug citing AC-23 is to be raised after merge, and this entry is then removed. The public `UpdatePoolPolicy` comment says turning cooldown off clears every release record; AC-23 describes the tested enabled-to-disabled transition only.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#27.

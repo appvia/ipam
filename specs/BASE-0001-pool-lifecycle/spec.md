@@ -92,7 +92,7 @@ As a library caller recovering from an interrupted create or delete, I distingui
 - **AC-21**: **Given** a pool with existing description and labels, **When** a caller successfully invokes `UpdatePoolMetadata`, **Then** the supplied description and label set replace the old values rather than merge with them; an empty description and nil or empty labels clear those values, while ID, family, CIDRs, parent reference and policy remain unchanged.
   - Evidence: UNTESTED (behaviour in `pool.go` `UpdatePoolMetadata`)
 
-- **AC-22**: Withdrawn (pending the product owner's decision in OQ-2 on metadata updates to unusable pool residue).
+- **AC-22**: Withdrawn (maintainer: metadata updates should require a usable pool and reservations pair; tracked in appvia/ipam#11).
 
 - **AC-23**: **Given** a usable pool with a live allocation, including a child's carve-out, **When** a caller invokes `DeletePool`, **Then** deletion is refused; the error reason and sentinel identity are defined by BASE-0006 error-contract AC-21.
   - Evidence: `client_lifecycle_test.go` `TestChildPoolLifecycleAndParentDeleteGuard`
@@ -166,10 +166,8 @@ Retry budgets and backoff limits are specified by BASE-0004 concurrency-and-retr
 - Storage key layout, JSON schema versions and document validation: see BASE-0007 document-format.
 - Pool statistics, backend configuration and CLI commands: see BASE-0008 pool-stats, BASE-0009 backend-url, BASE-0010 storage-contract, BASE-0011 local-backend, BASE-0012 s3-backend, BASE-0013 azblob-backend, BASE-0014 cli and BASE-0015 cli-doctor.
 - Resizing pools, changing a pool's parent or recursively deleting allocated pools. The lifecycle metadata operation changes only the description and labels.
-- Automatically finding and releasing abandoned carve-outs by scanning other pools. A process stopping after a carve-out is committed can leave its range reserved. (Losing the reference needed to release a carve-out during a failed deletion is a maintainer-confirmed bug; see OQ-4.) Explicit release by its complete carve-out ID is covered by BASE-0003 allocations and is safe only when no creation for that child can still be running (`doc.go`).
+- Automatically finding and releasing abandoned carve-outs by scanning other pools. A process stopping after a carve-out is committed can leave its range reserved. (Losing the reference needed to release a carve-out during a failed deletion is a maintainer-confirmed bug; see appvia/ipam#6.) Explicit release by its complete carve-out ID is covered by BASE-0003 allocations and is safe only when no creation for that child can still be running (`doc.go`).
 
 ## Open questions *(mandatory, empty before G2)*
 
-- **OQ-1**: `CreatePool` reports `pool_exists` for interrupted-operation residue when the surviving pool document conflicts with the requested specification. Maintainer answer (2026-11-03): this is a bug. `CreatePool` should report `pool_incomplete` for interrupted-operation residue even when the surviving pool document conflicts with the requested specification. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-2**: `pool.go` `UpdatePoolMetadata` reads and writes only the pool document, so it can succeed for a pool that `GetPool` rejects as incomplete or incarnation-mismatched without repairing that pair. AC-22 is withdrawn. Maintainer answer (2026-11-03, baseline-spec run): this is a bug; metadata updates should require a usable pair. A Bug citing this spec is to be raised after merge, and this entry is then removed.
-- **OQ-4**: A carve-out release failure after the child's documents have been deleted leaves the carve-out reserved, and another `DeletePool` reports `ErrNotFound` without releasing it because the reference is gone. Maintainer answer (2026-11-03): this is a bug. `DeletePool` must not leave an unreleasable carve-out when the carve-out release fails after the child's documents are deleted. A Bug citing this spec is to be raised after merge, and this entry is then removed.
+- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#26, appvia/ipam#11, appvia/ipam#6.
