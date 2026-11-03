@@ -19,7 +19,7 @@ A Story says what to build. Its plan says how, step by step, so the implementer 
 - Todos are `- [ ] N. title` at column zero, numbered 1, 2, 3 with no gaps, 3 to 8 of them.
 - Each todo has these fields: `Closes:`, `What to do:`, `Must NOT do:`, `References:`, `Acceptance:`, `QA happy:`, `QA failure:`, `Commit:`, and
   `Executor: implementer-(low|high) · difficulty: (low|medium|high) · skills: <list>`.
-- Every todo names the same plan-level agent (see the rubric). Difficulties may differ.
+- Each todo's Executor follows its own difficulty (see the rubric): a medium or high todo must use `implementer-high`.
 - Every skill named must exist in the org skills index. The TL;DR `Skills:` line is the union of the todo skills.
 - `F1.` to `F4.` are all present under Final verification.
 - Scope has IS and GAP rows, and every GAP is closed by some todo.

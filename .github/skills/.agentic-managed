@@ -1,7 +1,7 @@
 # Managed by appvia/agentic-delivery (repo-sync).
 # Skill directories listed here are owned by repo-sync and overwritten on every sync.
 # Any other directory under .github/skills is yours and is never touched.
-# appvia/agent-skills@skills-v2026.11.02-1884ecd
+# appvia/agent-skills@skills-v2026.11.03-21a4705
 ac-test-mapping
 spec-kit
 story-plan-authoring

@@ -34,7 +34,7 @@ Commands to run, and the test type that proves each IS row.
   QA happy: the new test exists and fails for the right reason. Evidence: test output
   QA failure: no other test changes state. Evidence: test summary
   Commit: test(tenants): cover admin-only invites (#123)
-  Executor: implementer-high · difficulty: low · skills: typescript-node, ac-test-mapping
+  Executor: implementer-low · difficulty: low · skills: typescript-node, ac-test-mapping
 - [ ] 2. Restrict invitations to tenant admins
   Closes: GAP-1 (IS-1)
   What to do: check the caller's role in src/tenants/invite.ts using src/auth/roles.ts
@@ -54,7 +54,7 @@ Commands to run, and the test type that proves each IS row.
   QA happy: table lists AC-3 with its test. Evidence: PR body
   QA failure: an AC with no test is flagged as unmapped. Evidence: PR body
   Commit: docs(tenants): map AC-3 to tests (#123)
-  Executor: implementer-high · difficulty: low · skills: ac-test-mapping
+  Executor: implementer-low · difficulty: low · skills: ac-test-mapping
 
 ### Final verification
 - [ ] F1. Plan compliance: every todo done as written, nothing extra
