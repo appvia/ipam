@@ -8,7 +8,7 @@ name: agentic-relay
 
 on:
   issues:
-    types: [opened, edited, labeled, unlabeled, closed]
+    types: [typed, edited, labeled, unlabeled, closed]
   issue_comment:
     types: [created]
   pull_request:
