@@ -360,6 +360,16 @@ func (client *Client) release(ctx context.Context, poolID, id string, recordRele
 		return &OpError{Op: "release", Pool: poolID, ID: id, Err: err}
 	}
 
+	if err := client.checkCarveOutRelease(ctx, poolID, id); err != nil {
+		return err
+	}
+
+	return client.removeAllocation(ctx, poolID, id, recordRelease, func(ctx context.Context, _ Allocation) error {
+		return client.checkCarveOutRelease(ctx, poolID, id)
+	})
+}
+
+func (client *Client) checkCarveOutRelease(ctx context.Context, poolID, id string) error {
 	if childID, incarnation, reserved := parseReservedAllocationID(id); reserved {
 		claimed, err := client.childIncarnationExists(ctx, childID, incarnation)
 		if err != nil {
@@ -374,6 +384,65 @@ func (client *Client) release(ctx context.Context, poolID, id string, recordRele
 		}
 	}
 
+	return nil
+}
+
+// releaseDeletedChild is exclusively for DeletePool after removing the empty
+// reservations document. Unlike public release and create compensation, it
+// permits the observed definition to remain as the durable retry reference.
+func (client *Client) releaseDeletedChild(ctx context.Context, child poolDocument) error {
+	parent := child.Parent
+	if parent == nil {
+		return fmt.Errorf("missing child parent reference: %w", ErrInvalidArgument)
+	}
+
+	childID, incarnation, ok := parseReservedAllocationID(parent.AllocationID)
+	if !ok || childID != child.ID || incarnation != child.Incarnation ||
+		parent.PoolID == child.ID || validatePoolID(parent.PoolID) != nil || len(child.CIDRs) != 1 {
+		return fmt.Errorf("invalid child parent association: %w", ErrInvalidArgument)
+	}
+
+	check := func(ctx context.Context, allocation Allocation) error {
+		documents, err := client.readPoolDocuments(ctx, child.ID)
+		if err != nil {
+			return err
+		}
+
+		matchingReservations := documents.reservations != nil && documents.reservations.Incarnation == incarnation
+		pool := documents.pool
+
+		changedDefinition := pool != nil && pool.Incarnation == incarnation &&
+			(!parentEqual(pool.Parent, parent) || !slices.Equal(pool.CIDRs, child.CIDRs))
+		if matchingReservations || changedDefinition || (allocation.ID != "" && allocation.CIDR != child.CIDRs[0]) {
+			return &OpError{
+				Op: "release", Pool: parent.PoolID, ID: parent.AllocationID,
+				Reason: "pool_in_use", Err: ErrConflict,
+			}
+		}
+
+		return nil
+	}
+
+	if err := check(ctx, Allocation{}); err != nil {
+		return err
+	}
+
+	err := client.removeAllocation(ctx, parent.PoolID, parent.AllocationID, true, check)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+
+	return err
+}
+
+// removeAllocation is the shared removal CAS loop. Its caller supplies the
+// release-specific safety check, repeated on every attempt before any write.
+func (client *Client) removeAllocation(
+	ctx context.Context,
+	poolID, id string,
+	recordRelease bool,
+	check func(context.Context, Allocation) error,
+) error {
 	lock := client.poolLock(poolID)
 	if err := lock.LockContext(ctx); err != nil {
 		return err
@@ -394,6 +463,10 @@ func (client *Client) release(ctx context.Context, poolID, id string, recordRele
 			allocation, found := reservations.Allocations[id]
 			if !found {
 				return nil
+			}
+
+			if err := check(ctx, allocation); err != nil {
+				return err
 			}
 
 			now := client.clock().UTC()

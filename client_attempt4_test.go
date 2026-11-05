@@ -996,7 +996,7 @@ func TestCrashAtEveryStoreCallThenHealthyRecovery(t *testing.T) {
 					t.Fatalf("%s: Allocate(c) after recovery = %v", name, err)
 				}
 
-				assertLifecycleInvariants(t, base)
+				assertStrictLifecycleInvariants(t, base)
 			}
 		}
 	}

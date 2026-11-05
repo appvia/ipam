@@ -107,14 +107,13 @@ func TestDeletePoolCrashPointsConverge(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name             string
-		op               string
-		key              string
-		allowSafeAbandon bool
+		name string
+		op   string
+		key  string
 	}{
-		{"after step 3 reservations delete", "delete-after", reservationsKey("child"), false},
-		{"after step 4 pool delete", "delete-after", poolKey("child"), true},
-		{"after step 5 parent release", "put-after", reservationsKey("parent"), false},
+		{"after step 3 reservations delete", "delete-after", reservationsKey("child")},
+		{"after step 4 parent release", "put-after", reservationsKey("parent")},
+		{"after step 5 pool delete", "delete-after", poolKey("child")},
 	}
 
 	for _, test := range tests {
@@ -151,11 +150,11 @@ func TestDeletePoolCrashPointsConverge(t *testing.T) {
 			allocations, err := client.ListAllocations(t.Context(), "parent")
 			assertNoError(t, err)
 
-			for _, allocation := range allocations {
-				if strings.HasPrefix(allocation.ID, "pool:child:") && !test.allowSafeAbandon {
-					t.Fatalf("orphaned child carve-out = %#v", allocation)
-				}
+			if len(allocations) != 0 {
+				t.Fatalf("parent allocations after delete retry = %#v, want none", allocations)
 			}
+
+			assertNoError(t, client.DeletePool(t.Context(), "parent"))
 		})
 	}
 }
