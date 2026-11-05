@@ -87,9 +87,12 @@ plus warning. These are planned mitigations, not evidence already collected.
 
 G3 requires security-managers review of the permission impact and owner resolution
 of T3/absolute AC-4, plus region confirmation or a recorded constitutional
-exception. Restore the exact pinned skill before claiming full workflow
-compliance. Do not widen IAM, modify the approved spec, approve gates or amend
-the design automatically as a consequence of this threat review.
+exception. The available Spec Kit v1.2.5 skill was loaded for this redraft;
+its availability removes the earlier tooling blocker, not these security or
+integrity conditions. See `research.md` for the decision record and
+`quickstart.md` for planned evidence. Do not widen IAM, modify the approved spec,
+approve gates or amend the design automatically as a consequence of this threat
+review.
 
 ## Residual risk
 

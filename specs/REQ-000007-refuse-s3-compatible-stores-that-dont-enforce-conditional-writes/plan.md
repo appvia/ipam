@@ -78,14 +78,30 @@ lazy first-operation verification violates the explicit opening boundary
 (AC-14); a process-global cache violates AC-6. New languages/services add no
 benefit for this library-level change (Constitution III).
 
-Planning used the checked-in Spec Kit skill and Appvia plan template.
-`target/.github/skills/spec-kit/SOURCE.md` identifies upstream v1.2.5, whereas
-the control plane pins upstream v1.2.6 and the skill import to
-`skills-v2026.11.05-0e850a2`; that import could not be retrieved in this run.
-Exact pinned-skill compliance is not claimed. No `.specify/extensions.yml` or
-setup script exists in the checkout. The workflow supplies the spec directory;
-research and validation are embedded here to keep writes within the permitted
-artifact list, rather than generating extra research/quickstart files.
+### Spec Kit redraft and planning status
+
+This redraft addresses the review requesting use of the now-available skill.
+The workflow's `spec-kit` skill was loaded before planning; its plan reference
+and the product's matching `.github/skills/spec-kit/references/vendor/speckit-plan.md`
+were read. `.github/skills/spec-kit/SOURCE.md` records Spec Kit v1.2.5 at commit
+`4572a67fe0e72a6837e2d7bb0fda875bc41482e5`. The plan retains the structure of
+`.specify/presets/appvia/templates/plan-template.md`. No installation or remote
+skill retrieval is needed; the previous missing-skill blocker no longer applies.
+
+The workflow supplies the existing spec directory and redraft branch. The
+checkout has neither `.specify/scripts/bash/setup-plan.sh` nor
+`.specify/extensions.yml`, so no setup script or extension hook is executed.
+No scaffolding is installed outside `specs/`. The skill's Phase 0 decision record
+is [research.md](research.md); its Phase 1 validation guide is
+[quickstart.md](quickstart.md), alongside the existing data model, contracts and
+ADRs. The architecture and its independent threat review remain separate.
+
+Code inspection resolves the technical choices, but cannot resolve an owner's
+acceptance of the AC-4 trust assumption. Phase 0 therefore remains blocked for
+implementation approval; the Phase 1 artifacts are conditional proposals for
+review, not evidence that the Spec Kit clarification gate has passed. The
+approved spec's stale Draft/awaiting-G2 wording is preserved unchanged; this run
+relies on the workflow's approved-spec input, not a local status amendment.
 
 ## Constitution check
 
@@ -93,13 +109,14 @@ artifact list, rather than generating extra research/quickstart files.
 | --- | --- | --- |
 | I. Security baseline | Same SDK identity and endpoint; validate all probe responses; safe diagnostics; scratch-only permissions. | High-risk G3 security review required for expanded scratch access, including previously read-only callers. AC-4 assumption unresolved. |
 | II. Test standards | Named proposed tests cover every AC; deterministic barriers, fake responses, synthetic credentials; full existing CI retained. | Tests are planned, not implemented or passing evidence. |
-| III. Technology choice | ADR-0001 selects existing exact-pinned Go/SDK stack and explicit build/test/lint commands. | No stack exception; exact imported skill availability must be restored. |
+| III. Technology choice | ADR-0001 selects existing exact-pinned Go/SDK stack and explicit build/test/lint commands; the available Spec Kit v1.2.5 skill guides this redraft. | No stack exception. |
 | IV. Accessibility | No visual interface; errors/warnings are readable text, separate from machine-readable stdout. CLI warning assertions included. | No new WCAG-applicable UI. |
 | V. Data residency | Reuse configured store only, with no external processor or region selection. | Actual deployment region unspecified; owner confirmation or explicit exception required before G3. |
 | VI. Data handling | Small synthetic probe payloads; no application reads, client identifiers or credential output. | None. |
 
 Post-design result: not ready for unconditional G3 approval. Integrity and
-residency questions and pinned-skill provenance remain explicit, not waived.
+deployment-residency questions remain explicit, not waived. Skill availability
+is no longer a blocker; it does not resolve those owner/security decisions.
 
 ## Components
 
@@ -230,12 +247,12 @@ covers oversized data. Synthetic seeded collisions exercise bounded regeneration
 fake entropy failure makes zero writes. Keep existing storage contract/outcome
 tests rather than dropping assertions that opening setup changes.
 
-Validation guide for implementation: first run
-`go test ./storage/s3 ./cmd/ipam . -run 'Test(Open|ConcurrentOpens|Construction|CLIRefuses|AutomationOpen|OpeningDiagnostics|Probe)' -count=1 -race`,
-then `make build`, `make test`, `make lint`. Expected results are the exact
-counter/data/version assertions above. No credentials or emulator are necessary
-for the acceptance matrix. Do not claim AWS/vendor certification from these
-tests. This documentation-only PR does not claim implementation tests passed.
+See [quickstart.md](quickstart.md) for implementation validation prerequisites,
+commands and expected outcomes. Its test-inventory check prevents a Go selector
+that matches no proposed tests from being mistaken for acceptance evidence.
+No credentials or emulator are necessary for the acceptance matrix. Do not
+claim AWS/vendor certification from these tests. This documentation-only PR
+does not claim implementation tests passed.
 
 ## Rollout
 
