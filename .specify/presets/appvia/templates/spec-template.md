@@ -40,7 +40,7 @@
 -->
 
 - **NFR-1**: [Quality] [comparator] [number] [unit], e.g. "p95 API latency is at most 300 ms at 50 requests per second"
-- **NFR-2**: [Accessibility, availability, data residency or security limit with a number and unit]
+- **NFR-2**: [Accessibility, availability or security limit with a number and unit]
 
 ## Key entities *(include if the feature involves data)*
 

@@ -2,7 +2,7 @@
 
 > **DRAFT** - not yet ratified. The platform team owns this file. Changes land through a pull request to `appvia/agentic-delivery` and reach product repos through repo-sync.
 
-**Version**: 0.1.0-draft | **Ratified**: pending | **Last amended**: 2026-10-28
+**Version**: 0.2.0-draft | **Ratified**: pending | **Last amended**: 2026-11-05
 
 This constitution sets the non-negotiables for every Requirement, spec, plan and Story delivered through the spec-driven pipeline. Agents and humans read it before writing a brief, spec, design or Story plan. A plan that breaks a rule here must say so in its Constitution Check and get the gate approver's explicit sign-off.
 
@@ -38,12 +38,7 @@ This constitution sets the non-negotiables for every Requirement, spec, plan and
 - User-facing interfaces meet **WCAG 2.2 level AA**.
 - Accessibility is part of a Story's acceptance criteria, not a later pass. Automated checks run in CI where the stack supports them.
 
-### V. Data residency
-
-- Data is stored and processed in the **UK or EU** only. **TO CONFIRM by owner.**
-- Specs name the region of every data store and every third-party processor.
-
-### VI. Data handling
+### V. Data handling
 
 - No real data, client identifiers or credentials in issues, specs, tests or fixtures; production data never leaves production unmasked.
 - Fixtures use synthetic data that can't be traced to a person or client.
