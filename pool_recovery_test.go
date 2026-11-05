@@ -67,8 +67,161 @@ func TestChildCreateCancellationRollback(t *testing.T) {
 			t.Log("failure identity: errors.Is(CreatePool error, context.Canceled) = true")
 			assertRecoveryChildDocumentsAbsent(t, fresh, openStore())
 			assertRecoveryParentReleased(t, fresh, New(openStore(), options...))
+
+			mustCreatePool(t, observer, "parent", "10.0.0.0/23")
+			recreated, err := observer.CreatePool(fresh, recoveryChildSpec())
+			assertNoError(t, err)
+
+			if recreated.CIDRs[0] != recoveryChildSpec().Request.CIDR {
+				t.Fatalf("recreated child CIDRs = %v, want explicit request", recreated.CIDRs)
+			}
 		})
 	})
+}
+
+func TestChildCreateCompensationGuards(t *testing.T) {
+	t.Run("AC-35", func(t *testing.T) {
+		for _, scenario := range []string{
+			"no-owned-documents", "owned-reservations", "owned-pool", "foreign-winner", "cleanup-error", "parent-absent",
+		} {
+			t.Run(scenario, func(t *testing.T) {
+				runPoolRecoveryCases(t, func(t *testing.T, openStore func() storage.Storage, options []Option) {
+					base := openStore()
+					setup := New(base, options...)
+					mustCreatePool(t, setup, "parent", "10.0.0.0/23")
+					child, err := setup.CreatePool(t.Context(), recoveryChildSpec())
+					assertNoError(t, err)
+
+					if scenario != "owned-pool" {
+						rawDelete(t, base, poolKey("child"))
+					}
+
+					if scenario != "owned-reservations" {
+						rawDelete(t, base, reservationsKey("child"))
+					}
+
+					var winner Pool
+
+					winnerVersions := make(map[string]storage.Version)
+
+					if scenario == "foreign-winner" {
+						spec := recoveryChildSpec()
+						spec.Request.CIDR = netip.MustParsePrefix("10.0.1.0/24")
+						winner, err = New(openStore(), options...).CreatePool(t.Context(), spec)
+						assertNoError(t, err)
+
+						for _, key := range []string{poolKey("child"), reservationsKey("child")} {
+							_, version, readErr := base.Get(t.Context(), key)
+							assertNoError(t, readErr)
+
+							winnerVersions[key] = version
+						}
+					}
+
+					if scenario == "parent-absent" {
+						rawDelete(t, base, reservationsKey("parent"))
+						rawDelete(t, base, poolKey("parent"))
+					}
+
+					cleanupFailure := errors.New("synthetic compensation failure")
+
+					store := openStore()
+					if scenario == "cleanup-error" {
+						store = &recoveryReleaseFailureStore{Storage: store, err: cleanupFailure}
+					}
+
+					probe := &recoveryCompensationContextStore{Storage: store}
+
+					type contextKey struct{}
+
+					ctx, cancel := context.WithCancel(context.WithValue(t.Context(), contextKey{}, "synthetic-value"))
+					cancel()
+
+					cause := errors.New("synthetic publication failure")
+					before := time.Now()
+					err = New(probe, options...).releaseOwnCarveOut(ctx, child.Parent, false, cause)
+					after := time.Now()
+
+					if probe.ctx == nil {
+						t.Fatal("compensation did not reach storage")
+					}
+
+					deadline, bounded := probe.ctx.Deadline()
+					if probe.entryErr != nil || !bounded || deadline.Before(before.Add(5*time.Second)) ||
+						deadline.After(after.Add(5*time.Second)) || probe.ctx.Value(contextKey{}) != "synthetic-value" {
+						t.Errorf("compensation context: entry error = %v, deadline = %v (bounded %t), value = %v",
+							probe.entryErr, deadline, bounded, probe.ctx.Value(contextKey{}))
+					}
+
+					if probe.ctx.Err() != context.Canceled {
+						t.Errorf("compensation context after return = %v, want canceled", probe.ctx.Err())
+					}
+
+					if scenario == "cleanup-error" {
+						if !errors.Is(err, cause) || !errors.Is(err, cleanupFailure) {
+							t.Errorf("compensation error = %v, want both causes", err)
+						}
+					} else if err != cause {
+						t.Errorf("compensation error = %v, want only original cause %v", err, cause)
+					}
+
+					if scenario == "parent-absent" {
+						return
+					}
+
+					observer := New(openStore(), options...)
+					if scenario == "owned-reservations" || scenario == "owned-pool" || scenario == "cleanup-error" {
+						carve := assertRecoveryCarveOut(t, t.Context(), observer)
+						if carve.ID != child.Parent.AllocationID {
+							t.Errorf("retained carve-out = %s, want %s", carve.ID, child.Parent.AllocationID)
+						}
+
+						return
+					}
+
+					if scenario == "foreign-winner" {
+						allocations, listErr := observer.ListAllocations(t.Context(), "parent")
+						assertNoError(t, listErr)
+
+						if len(allocations) != 1 || allocations[0].ID != winner.Parent.AllocationID ||
+							allocations[0].CIDR != winner.CIDRs[0] {
+							t.Errorf("winner reservations = %#v, want only %s", allocations, winner.Parent.AllocationID)
+						}
+
+						for key, want := range winnerVersions {
+							_, version, readErr := base.Get(t.Context(), key)
+							assertNoError(t, readErr)
+
+							if version != want {
+								t.Errorf("winner %s version changed from %s to %s", key, want, version)
+							}
+						}
+
+						return
+					}
+
+					assertRecoveryParentReleased(t, t.Context(), observer)
+				})
+			})
+		}
+	})
+}
+
+type recoveryCompensationContextStore struct {
+	storage.Storage
+	ctx      context.Context
+	entryErr error
+}
+
+func (store *recoveryCompensationContextStore) Get(
+	ctx context.Context, key string,
+) ([]byte, storage.Version, error) {
+	if store.ctx == nil {
+		store.ctx = ctx
+		store.entryErr = ctx.Err()
+	}
+
+	return store.Storage.Get(ctx, key)
 }
 
 func TestChildDeleteReleaseRetry(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/appvia/ipam/storage"
 )
@@ -226,7 +227,10 @@ func (client *Client) releaseOwnCarveOut(
 		return cause
 	}
 
-	releaseErr := client.release(ctx, parent.PoolID, parent.AllocationID, publicationPossible)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	releaseErr := client.release(cleanupCtx, parent.PoolID, parent.AllocationID, publicationPossible)
 	if releaseErr == nil || errors.Is(releaseErr, ErrNotFound) || conflictReason(releaseErr, "pool_in_use") {
 		return cause
 	}
