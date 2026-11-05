@@ -3,9 +3,13 @@
 **Requirement**: REQ-000007 ([Requirement issue](https://github.com/appvia/ipam/issues/7))
 **Spec path**: `specs/REQ-000007-s3-conditional-writes/spec.md`
 **Created**: 2026-11-05
-**Status**: Draft - region confirmation required before G2
+**Status**: Draft - ready for G2 review
 **Input**: Approved [brief](brief.md), [author clarifications](clarifications.md),
 and the [constitution](../../.specify/memory/constitution.md)
+
+**Constitution basis**: [Version 0.2.0-draft](https://github.com/appvia/ipam/blob/773098ac9622c2381dc8c07c7f7eb976a05b3edb/.specify/memory/constitution.md),
+dated 2026-11-05, on the current base branch. This version removes the former residency article; no regional
+constraint or residency confirmation is required for this specification.
 
 ## User journeys *(mandatory)*
 
@@ -164,10 +168,6 @@ address-management data or silently accumulate without operator guidance.
 - **NFR-4**: Check objects, diagnostics, examples, and error messages contain
   **0 real personal records, client identifiers, credentials, or secret values**.
   Check data is synthetic and cannot be traced to a person or customer.
-- **NFR-5**: Storage and processing take place in **0 regions outside the UK or
-  EU**, subject to constitution article V's pending owner confirmation. The
-  permitted named storage and processing regions remain an approval blocker
-  until Q1 is answered; this draft does not choose them.
 
 ## Key entities *(include if the feature involves data)*
 
@@ -199,10 +199,6 @@ address-management data or silently accumulate without operator guidance.
 
 ## Open questions *(mandatory, empty before G2)*
 
-1. **Q1 - Residency (Requirement owner):** Which named UK or EU region or regions
-   are permitted for the existing store, temporary check objects, and any
-   third-party processing involved in verification? Please confirm constitution
-   article V's UK/EU restriction and identify any such processors, or confirm
-   that verification introduces none. The approved inputs do not supply this
-   information; no region or processor is assumed.
-   [NEEDS CLARIFICATION: Owner confirmation of permitted regions and processors.]
+None. Q1 was retired following the published constitution amendment recorded in
+[clarification 6](clarifications.md), not by assuming a region or granting an
+exception. The specification remains subject to human G2 approval.
