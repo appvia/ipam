@@ -1,10 +1,10 @@
 # Feature Specification: [FEATURE NAME]
 
-**Requirement**: [REQ-NNNN] ([owner/repo]#[issue])
-**Spec path**: `specs/[REQ-NNNN-slug]/spec.md`
+**Requirement**: [REQ-NNNNNN] ([owner/repo]#[issue])
+**Spec path**: `specs/[REQ-NNNNNN-slug]/spec.md`
 **Created**: [DATE]
 **Status**: Draft
-**Input**: Approved brief `specs/[REQ-NNNN-slug]/brief.md` and `clarifications.md`
+**Input**: Approved brief `specs/[REQ-NNNNNN-slug]/brief.md` and `clarifications.md`
 
 ## User journeys *(mandatory)*
 

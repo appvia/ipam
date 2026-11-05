@@ -2,7 +2,7 @@
 
 Specs follow GitHub Spec Kit with the Appvia presets in `.specify/presets/appvia/`. Don't invent another format.
 
-- Each Requirement has one folder, `specs/REQ-NNNN-<slug>/`, holding `brief.md`, `clarifications.md`, `spec.md`, `plan.md`, `tasks.md` and, where needed, `research.md`, `data-model.md`, `contracts/`, `decisions/ADR-NNNN-*.md` and `threat-model.md`.
+- Each Requirement has one folder, `specs/REQ-NNNNNN-<slug>/`, holding `brief.md`, `clarifications.md`, `spec.md`, `plan.md`, `tasks.md` and, where needed, `research.md`, `data-model.md`, `contracts/`, `decisions/ADR-NNNN-*.md` and `threat-model.md`.
 - `brief.md` stays in business language: problem, outcome metric, users, constraints, out of scope.
 - `spec.md` numbers every acceptance criterion `AC-1`, `AC-2` and so on, in Given/When/Then form. Never renumber after G2, because Stories, plans, tests and Bugs cite these ids.
 - Every non-functional requirement has a number and a unit.

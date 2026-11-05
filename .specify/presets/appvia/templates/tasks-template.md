@@ -1,7 +1,7 @@
 # Tasks: [FEATURE NAME]
 
-**Spec**: `specs/[REQ-NNNN-slug]/spec.md`
-**Design**: `specs/[REQ-NNNN-slug]/plan.md`
+**Spec**: `specs/[REQ-NNNNNN-slug]/spec.md`
+**Design**: `specs/[REQ-NNNNNN-slug]/plan.md`
 **Requirement risk**: [low | medium | high]
 
 <!--
@@ -15,7 +15,7 @@
     kind, title, parent, repo, area, size, autonomy, risk, spec_path,
     what_to_build, acceptance, constraints, test_expectations, hints, depends_on
   - kind: feature | story | enabler. Titles are unique in the file.
-  - parent: a Feature's parent is the Requirement id (REQ-NNNN); a Story's or
+  - parent: a Feature's parent is the Requirement id (REQ-NNNNNN); a Story's or
     Enabler's parent is the title of a Feature block in this file.
   - repo: owner/name. One repo per Story; a change to two repos is two Stories.
   - size: XS | S | M | L | XL; Stories and Enablers are M or smaller.
@@ -36,13 +36,13 @@
 ```yaml
 kind: feature
 title: Tenant admins manage their own users
-parent: REQ-0042
+parent: REQ-000042
 repo: appvia/example-specs
 area: tenants
 size: L
 autonomy: Agent-led
 risk: medium
-spec_path: specs/REQ-0042-tenant-self-service/spec.md
+spec_path: specs/REQ-000042-tenant-self-service/spec.md
 what_to_build: Tenant admins can invite, list and remove users in their own tenant without a support ticket.
 acceptance:
   - AC-1
@@ -65,7 +65,7 @@ area: tenants
 size: S
 autonomy: Agent-led
 risk: medium
-spec_path: specs/REQ-0042-tenant-self-service/spec.md
+spec_path: specs/REQ-000042-tenant-self-service/spec.md
 what_to_build: Users carry a tenant role of admin or member, defaulting to member for existing users.
 acceptance:
   - "AC-3: Given an existing user, when the migration runs, then their role is member"
@@ -90,7 +90,7 @@ area: tenants
 size: M
 autonomy: Agent-led
 risk: medium
-spec_path: specs/REQ-0042-tenant-self-service/spec.md
+spec_path: specs/REQ-000042-tenant-self-service/spec.md
 what_to_build: A tenant admin can invite a user by email; a member who tries gets a clear refusal and nothing is stored.
 acceptance:
   - "AC-1: Given a tenant admin, when they invite a user, then the user is listed as invited"

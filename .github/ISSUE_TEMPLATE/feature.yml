@@ -8,7 +8,7 @@ body:
     attributes:
       label: Spec
       description: "Path to the spec and the acceptance criteria this Feature covers."
-      placeholder: "specs/REQ-0042-tenant-self-service/spec.md - AC-1, AC-2"
+      placeholder: "specs/REQ-000042-tenant-self-service/spec.md - AC-1, AC-2"
     validations:
       required: true
   - type: textarea
