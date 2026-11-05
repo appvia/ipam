@@ -16,3 +16,7 @@ Answers below are from the Requirement author in comments on [appvia/ipam#7](htt
 
 5. **Question:** What is the maximum acceptable added latency for one probe sequence during each S3 backend open? ([question](https://github.com/appvia/ipam/issues/7#issuecomment-6664642902))
    **Answer:** No more than 1 second on Amazon S3, for about four or five small requests. ([author's answer](https://github.com/appvia/ipam/issues/7#issuecomment-6665330131))
+
+6. **Question (spec Q1):** Which storage and processing regions are permitted under the former constitution residency article? ([question](https://github.com/appvia/ipam/issues/7#issuecomment-6665942240))
+   **Answer:** The Requirement author reported that the constitution had been updated. ([author's answer](https://github.com/appvia/ipam/issues/7#issuecomment-6666249367))
+   **Disposition:** Verified against [constitution version 0.2.0-draft](https://github.com/appvia/ipam/blob/773098ac9622c2381dc8c07c7f7eb976a05b3edb/.specify/memory/constitution.md), dated 2026-11-05, on the current base branch: the former residency article is absent. Q1 and its dependent NFR-5 are therefore retired; no deployment region is assumed. The earlier comment asking to disregard residency was not accepted as authority to waive the constitution. All current security and data-handling obligations remain in force.
