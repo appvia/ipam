@@ -1,7 +1,7 @@
 # Feature Specification: Refuse stores that ignore conditional writes
 
-**Requirement**: REQ-0007 (<https://github.com/appvia/ipam/issues/7>)
-**Spec path**: `specs/REQ-0007-refuse-s3-compatible-stores-that-dont-enforce-conditional-writes/spec.md`
+**Requirement**: REQ-000007 (<https://github.com/appvia/ipam/issues/7>)
+**Spec path**: `specs/REQ-000007-refuse-s3-compatible-stores-that-dont-enforce-conditional-writes/spec.md`
 **Created**: 2026-11-05
 **Status**: Draft - clarification required before G2
 **Input**: Approved [brief](brief.md) and [clarifications](clarifications.md)
