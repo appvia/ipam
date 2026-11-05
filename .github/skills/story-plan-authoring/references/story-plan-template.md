@@ -17,7 +17,7 @@ Must NOT have: no new dependencies; no change to contracts/tenant.yaml
 
 ### References
 - Pattern to copy: src/users/create.ts (validation and error shape)
-- Contract: specs/REQ-0042-tenant-self-service/contracts/tenant.yaml
+- Contract: specs/REQ-000042-tenant-self-service/contracts/tenant.yaml
 - Decision: ADR-0003
 - Tests to mirror: test/users/create.test.ts
 

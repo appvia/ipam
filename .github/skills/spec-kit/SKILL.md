@@ -24,7 +24,7 @@ Pin the tag. Never install from `main`.
 
 ## Appvia presets
 
-- One folder per requirement: `specs/<REQ-id>-<slug>/`.
+- One folder per requirement: `specs/<REQ-id>-<slug>/`, where `<REQ-id>` is `REQ-` and the Requirement issue number zero-padded to 6 digits (issue 7 is `REQ-000007`).
 - Every AC is testable and numbered `AC-1`, `AC-2`, ... Numbers never change once G2 approves the spec; add new ones at the end.
 - NFRs carry a number and a unit (`p95 < 300 ms`), never "fast" or "secure".
 - Don't invent requirements. Anything you can't source from the issue or the constitution goes in Clarifications as a question.
