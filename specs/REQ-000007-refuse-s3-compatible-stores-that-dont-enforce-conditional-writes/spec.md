@@ -3,7 +3,7 @@
 **Requirement**: REQ-000007 (<https://github.com/appvia/ipam/issues/7>)
 **Spec path**: `specs/REQ-000007-refuse-s3-compatible-stores-that-dont-enforce-conditional-writes/spec.md`
 **Created**: 2026-11-05
-**Status**: Draft - clarification required before G2
+**Status**: Draft - review clarifications incorporated; awaiting G2
 **Input**: Approved [brief](brief.md) and [clarifications](clarifications.md)
 
 ## User journeys *(mandatory)*
@@ -59,11 +59,20 @@ misrepresent an unavailable store as proven nonconforming.
 - **FR-6**: Both command-line and infrastructure automation callers MUST receive
   the refusal before their requested operation changes application data.
   See AC-10.
+- **FR-7**: The check MUST attempt to remove its temporary data. If removal
+  fails, the caller MUST receive a warning that temporary check data may remain.
+  A removal failure alone MUST NOT refuse an otherwise-verified open, and its
+  warning MUST NOT hide or override a verification failure. See AC-12 and AC-13.
+- **FR-8**: Opening is the verification boundary. Constructing a backend alone
+  MUST retain the existing no-network-call contract; opening it for use MUST
+  perform the check before client operations are available. See AC-14.
 
 Scope follows the approved brief and the supported-store rule in
 [BASE-0012](../BASE-0012-s3-backend/spec.md). This adds automatic opening checks;
-it does not certify every aspect of a store's behavior. The direct-construction
-boundary remains open in Q2 below.
+it does not certify every aspect of a store's behavior. Opening is distinct
+from construction, preserving the baseline's offline-construction promise.
+The recorded review answers in [clarifications](clarifications.md) settle the
+temporary-data lifecycle, opening boundary and residency scope.
 
 ## Acceptance criteria *(mandatory)*
 
@@ -118,6 +127,19 @@ boundary remains open in Q2 below.
   caller opens each configuration, **Then** both undergo conditional-write
   verification and are accepted or refused according to the observed behavior,
   not solely the address selection.
+- **AC-12**: **Given** an opening check has verified both write conditions,
+  **When** removal of its temporary data fails, **Then** opening succeeds, the
+  caller receives a warning that temporary check data may remain, and the
+  backend permits otherwise-valid client operations.
+- **AC-13**: **Given** an opening check fails or cannot establish enforcement
+  after creating temporary data, **When** removal of that data also fails,
+  **Then** opening still returns no usable backend, retains the verification
+  failure as an error, and additionally warns that temporary check data may
+  remain.
+- **AC-14**: **Given** valid backend configuration, **When** a library caller
+  constructs the backend without opening it and then separately opens it,
+  **Then** construction makes zero network calls and opening verifies both
+  write conditions before making client operations available.
 
 ## Non-functional requirements *(mandatory)*
 
@@ -156,13 +178,17 @@ constitution. This specification does not claim those tests already exist.
 
 - **Configured store**: The operator-selected storage location and namespace
   containing existing application objects; no new external processor is added.
-  Its permitted region is subject to Q3.
+  This change selects no region and introduces no regional eligibility check;
+  existing deployment obligations under the constitution remain unchanged.
 - **Backend open**: A caller's attempt to obtain a usable connection to the
-  configured store. Each open requires a fresh check.
+  configured store, distinct from construction alone. Each open requires a
+  fresh check.
 - **Opening check**: Verification of both conditional-write behaviors before
   application operations are permitted.
 - **Temporary check object**: Synthetic, non-application data used only for the
-  check; it must not replace or be mistaken for an existing object.
+  check; it must not replace or be mistaken for an existing object. Removal is
+  attempted, with a warning if it fails. Successful removal leaves no temporary
+  check data; process interruption does not guarantee cleanup.
 
 ## Out of scope *(mandatory)*
 
@@ -174,24 +200,14 @@ constitution. This specification does not claim those tests already exist.
 - Repairing existing conflicting allocations or historical data corruption.
 - Rechecking enforcement continuously after a backend has opened.
 - New bypass controls that permit use after a failed opening check.
+- Guaranteed temporary-data removal after process interruption, or a new
+  operator cleanup facility or automatic residual-data recovery process.
+- Selecting storage regions or adding region-eligibility enforcement to the
+  opening check; this does not exempt deployments from the constitution.
 - Selecting technologies, request sequences, object naming schemes or code
   structure; those belong to the design stage.
 
 ## Open questions *(mandatory, empty before G2)*
 
-1. **Q1 - Temporary-object lifecycle (Requirement owner)**: The clarification
-   permits creating a temporary check object but does not define its removal.
-   Must successful opening require its removal, and should failed or uncertain
-   cleanup refuse opening or permit it with an explicit warning? What residual
-   data and operator cleanup obligations are acceptable after interruption?
-2. **Q2 - Direct-construction boundary (Requirement owner)**: Does "each time
-   backend opened" include direct backend construction by library callers?
-   BASE-0012 AC-4 currently promises construction without network calls. Confirm
-   whether that promise changes or the check applies at a distinct opening
-   boundary, including the protection expected for direct library callers.
-3. **Q3 - Data residency (Constitution owner and Requirement owner)**: The
-   constitution's UK/EU-only policy is marked "TO CONFIRM by owner". Which
-   operator-selected store regions are permitted for the temporary check data,
-   and is region eligibility an existing deployment prerequisite or something
-   this opening check must enforce? No region or additional processor is
-   selected by this specification.
+- None. The Requirement author's review answers are recorded in
+  [clarifications](clarifications.md); G2 approval remains a human decision.

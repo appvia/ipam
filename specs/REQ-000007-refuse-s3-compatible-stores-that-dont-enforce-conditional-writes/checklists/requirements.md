@@ -13,12 +13,13 @@
 
 ## Requirement completeness
 
-- [ ] No material open questions remain.
+- [x] No material open questions remain.
 - [x] Defined requirements are testable and use numbered acceptance criteria.
 - [x] Every acceptance criterion uses Given/When/Then.
 - [x] Non-functional requirements contain numeric limits and units.
 - [x] Success criteria are observable without reading code.
 - [x] Includes failure, cancellation and concurrent-opening scenarios.
+- [x] Covers cleanup warnings and the offline-construction/opening boundary.
 - [x] Bounds scope and names the approved input documents.
 
 ## Feature readiness
@@ -26,13 +27,14 @@
 - [x] Functional requirements map to acceptance criteria.
 - [x] Numbered user journeys cover refusal, supported use and failed checks.
 - [x] Requires named automated evidence with synthetic data at implementation.
-- [ ] Ready for G2 approval and subsequent planning.
+- [x] Ready for human G2 review; planning remains subject to approval.
 
 ## Notes
 
-Q1 leaves temporary-object cleanup and residual-data behavior undecided.
-Q2 identifies the existing baseline's offline-construction promise.
-Q3 requires confirmation of the constitution's provisional residency policy.
-These are explicit questions, not assumed requirements. Clarification is needed
-before this draft is ready for G2; no implementation or automated-test evidence
-is claimed by this documentation change.
+The Requirement author's review answers are recorded in `clarifications.md`.
+AC-12 and AC-13 cover removal-failure warnings without weakening verification;
+AC-14 preserves offline construction and checks at the opening boundary.
+Residency enforcement is not added by this change; the constitution is unchanged.
+There are no remaining material open questions. Human G2 approval is still
+required; no implementation or automated-test evidence is claimed by this
+documentation change.
