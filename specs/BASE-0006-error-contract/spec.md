@@ -6,6 +6,15 @@
 **Status**: Draft
 **Input**: Existing code at appvia/ipam@3833bccf042b01540a5ab4ea002e8ee73c7f19b7
 
+## Proposed Requirement overlay
+
+[REQ-000070](../REQ-000070-conditional-write-backends/spec.md) adds a dedicated,
+programmatically distinguishable unverified-backend refusal category (AC-5).
+Its public name is deferred to design. The six baseline sentinels in AC-1 remain;
+that inventory is not exhaustive once this Requirement is delivered. New refusal
+diagnostics follow the Requirement's guidance and redaction criteria (AC-6,
+AC-24). Existing AC identifiers and evidence below describe baseline behavior.
+
 ## User journeys *(mandatory)*
 
 ### Journey 1 - Classify a failed operation (Priority: P1)

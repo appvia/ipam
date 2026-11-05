@@ -6,6 +6,17 @@
 **Status**: Draft
 **Input**: Existing code at appvia/ipam@3833bccf042b01540a5ab4ea002e8ee73c7f19b7
 
+## Proposed Requirement overlay
+
+[REQ-000070](../REQ-000070-conditional-write-backends/spec.md) adds URL-based
+support classification and default refusal for unverified endpoints to both
+library URL-opening entry points. Successful custom-endpoint opening below
+becomes conditional on explicit consent when the endpoint is unverified
+(Requirement AC-1 through AC-8). The existing URL grammar and validation remain
+mandatory even with consent (Requirement AC-23), and opening remains network-free
+(Requirement AC-17). Existing AC identifiers and evidence are retained as the
+baseline; they do not prove the proposed gate or consent behavior.
+
 ## User journeys *(mandatory)*
 
 ### Journey 1 - Select storage with a URL (Priority: P1)

@@ -6,6 +6,18 @@
 **Status**: Draft
 **Input**: Existing code at appvia/ipam@3833bccf042b01540a5ab4ea002e8ee73c7f19b7
 
+## Proposed Requirement overlay
+
+[REQ-000070](../REQ-000070-conditional-write-backends/spec.md) adds a classification
+check: PASS for verified, WARN for allowed unverified, FAIL for unverified without
+consent. This check is included in both existing output formats and participates
+in the existing result and exit-status aggregation. Classification FAIL does not
+itself suppress other read-only checks (Requirement AC-13 through AC-16). Thus
+existing exact check inventories below gain this result. Whether existing write
+probes run without consent remains Q1 in that Requirement and must be settled
+before G2. No repair of the existing probe or proof of conditional deletion is
+included. Existing AC identifiers and baseline evidence are retained.
+
 ## User journeys *(mandatory)*
 
 ### Journey 1 - Check a backend before using it (Priority: P1)
