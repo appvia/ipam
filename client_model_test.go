@@ -281,6 +281,16 @@ func (store *lifecycleFaultStore) DeleteIfMatch(
 
 func assertLifecycleInvariants(t *testing.T, store storage.Storage) {
 	t.Helper()
+	assertLifecycleInvariantsWithPending(t, store, true)
+}
+
+func assertStrictLifecycleInvariants(t *testing.T, store storage.Storage) {
+	t.Helper()
+	assertLifecycleInvariantsWithPending(t, store, false)
+}
+
+func assertLifecycleInvariantsWithPending(t *testing.T, store storage.Storage, allowPending bool) {
+	t.Helper()
 
 	ctx := t.Context()
 	pools := make(map[string]poolDocument)
@@ -368,6 +378,15 @@ func assertLifecycleInvariants(t *testing.T, store storage.Storage) {
 	for childID, child := range pools {
 		if child.Parent == nil {
 			continue
+		}
+
+		childReservations, matching := reservations[childID]
+		if !matching || childReservations.Incarnation != child.Incarnation {
+			if allowPending {
+				continue
+			}
+
+			t.Fatalf("child %q is still deletion-pending after recovery", childID)
 		}
 
 		parentReservations, found := reservations[child.Parent.PoolID]

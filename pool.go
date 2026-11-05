@@ -941,9 +941,9 @@ func (client *Client) updatePoolCooldown(
 
 // DeletePool removes a pool and releases its incarnation-keyed carve-out. It
 // is also the recovery path for every residue an interrupted create or delete
-// can leave: (a) a complete empty pool is deleted reservations first, then the
-// pool document, then the carve-out; (b) a pool document without reservations
-// of its incarnation is deleted and its carve-out released; (c) an empty
+// can leave: (a) a complete empty pool is deleted reservations first, then its
+// carve-out, then the pool document; (b) a pool document without reservations
+// of its incarnation is retained until its carve-out is released; (c) an empty
 // reservations document without its pool document is deleted (a non-empty one
 // is ErrConflict with Reason pool_not_empty). An in-flight creator whose
 // reservations document is removed this way withdraws its own pool document
@@ -958,9 +958,10 @@ func (client *Client) DeletePool(ctx context.Context, poolID string) error {
 	}
 
 	foundAny := false
+	target := poolDeletion{}
 
 	for attempt := 1; ; attempt++ {
-		found, retry, err := client.deletePoolAttempt(ctx, poolID)
+		found, retry, err := client.deletePoolAttempt(ctx, poolID, &target)
 		foundAny = foundAny || found
 
 		if err == nil {
@@ -985,9 +986,19 @@ func (client *Client) DeletePool(ctx context.Context, poolID string) error {
 	}
 }
 
+// poolDeletion pins the initial residue shape for one DeletePool call. Retries
+// may finish that lifetime but must never adopt a replacement's documents.
+type poolDeletion struct {
+	observed                bool
+	incarnation             string
+	reservationsIncarnation string
+	pool                    *poolDocument
+}
+
 func (client *Client) deletePoolAttempt(
 	ctx context.Context,
 	poolID string,
+	target *poolDeletion,
 ) (found, retry bool, result error) {
 	lock := client.poolLock(poolID)
 	if err := lock.LockContext(ctx); err != nil {
@@ -1000,12 +1011,28 @@ func (client *Client) deletePoolAttempt(
 		return false, false, err
 	}
 
-	if documents.pool == nil && documents.reservations == nil {
-		lock.Unlock()
-		return false, false, nil
+	if !target.observed {
+		target.observed = true
+		target.pool = documents.pool
+
+		if documents.reservations != nil {
+			target.incarnation = documents.reservations.Incarnation
+			target.reservationsIncarnation = documents.reservations.Incarnation
+		}
+
+		if documents.pool != nil {
+			target.incarnation = documents.pool.Incarnation
+		}
 	}
 
-	if reservations := documents.reservations; reservations != nil && len(reservations.Allocations) != 0 {
+	if documents.pool != nil && documents.pool.Incarnation == target.incarnation && target.pool == nil {
+		// A reservations-only creator may have published after our first read.
+		target.pool = documents.pool
+	}
+
+	reservations := documents.reservations
+	if reservations != nil && reservations.Incarnation == target.reservationsIncarnation &&
+		len(reservations.Allocations) != 0 {
 		lock.Unlock()
 
 		if documents.usable() {
@@ -1019,7 +1046,7 @@ func (client *Client) deletePoolAttempt(
 		}
 	}
 
-	if documents.reservations != nil {
+	if reservations != nil && reservations.Incarnation == target.reservationsIncarnation {
 		if retry, err := client.deletePoolDocument(
 			ctx, reservationsKey(poolID), documents.reservationsVersion,
 		); err != nil {
@@ -1027,31 +1054,36 @@ func (client *Client) deletePoolAttempt(
 			return true, retry, err
 		}
 
-		if documents.pool == nil {
+		if target.pool == nil {
 			// Shape (c): a creator of this incarnation may have published its pool
 			// document meanwhile; finish the delete as shape (b) in that case.
-			deletedIncarnation := documents.reservations.Incarnation
-
 			documents, err = client.readPoolDocuments(ctx, poolID)
-			if err != nil || documents.pool == nil || documents.pool.Incarnation != deletedIncarnation {
+			if err != nil || documents.pool == nil || documents.pool.Incarnation != target.incarnation {
 				lock.Unlock()
 				return true, false, err
 			}
-		}
-	}
 
-	pool := documents.pool
-	if retry, err := client.deletePoolDocument(ctx, poolKey(poolID), documents.poolVersion); err != nil {
-		lock.Unlock()
-		return true, retry, err
+			target.pool = documents.pool
+		}
 	}
 
 	lock.Unlock()
 
-	if pool.Parent != nil {
-		releaseErr := client.Release(ctx, pool.Parent.PoolID, pool.Parent.AllocationID)
-		if releaseErr != nil && !errors.Is(releaseErr, ErrNotFound) {
-			return true, false, releaseErr
+	if target.pool == nil {
+		return reservations != nil, false, nil
+	}
+
+	// Do not hold the child lock while acquiring the parent's lock. The pool
+	// definition is the durable retry reference until release is confirmed.
+	if target.pool.Parent != nil {
+		if err := client.releaseDeletedChild(ctx, *target.pool); err != nil {
+			return true, false, err
+		}
+	}
+
+	if documents.pool != nil && documents.pool.Incarnation == target.incarnation {
+		if retry, err := client.deletePoolDocument(ctx, poolKey(poolID), documents.poolVersion); err != nil {
+			return true, retry, err
 		}
 	}
 
