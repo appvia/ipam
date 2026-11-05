@@ -669,9 +669,32 @@ to the same pool, which removes self-contention.
 
 Child-pool creation writes three documents in order: the carve-out in the
 parent's reservations, the child's reservations document, then the child's
-pool document. If a process stops part-way, `CreatePool` for that ID returns
-`ErrConflict` with reason `pool_incomplete`, and `DeletePool` clears the
-residue. Residue never causes an overlap.
+pool document. On a returned creation failure, the library attempts to release
+that call's carve-out with a context detached from caller cancellation and
+bounded to **five seconds**. It releases only when neither child document of
+that incarnation remains. The original error remains identifiable with
+`errors.Is`; unexpected cleanup errors are joined to it. This is not
+crash-proof creation: process death can prevent compensation. A carve-out left
+before child publication, with no child documents, still needs manual recovery.
+
+If child documents remain, `CreatePool` for that ID returns `ErrConflict` with
+reason `pool_incomplete`, and `DeletePool` clears removable document residue.
+Child deletion now removes empty reservations first, releases the parent's
+carve-out, then conditionally deletes the child pool document. That final
+document retains the parent reference until release is confirmed. After a
+release or final-delete failure, retry `DeletePool` with a fresh context and
+client; no client-local recovery state is required. While only the pool
+document remains, `GetPool` returns `ErrNotFound` and `CreatePool` reports
+`pool_incomplete`.
+
+The private deletion path validates the child ID, incarnation, parent
+association and CIDR, and rechecks that no reservations of that incarnation
+exist on each parent CAS attempt. Only this path permits release while the
+retained pool document exists. Public `Release` is unchanged: either matching
+child document blocks release with `pool_in_use`. A retry does not remove a
+replacement incarnation or extend cooldown for an already released carve-out.
+Recovery uses the existing documents, keys and schemas, without lifecycle
+markers or orphan scans. Residue keeps space reserved rather than overlapping.
 
 ## Access model
 
@@ -814,10 +837,15 @@ or release it:
 ipam alloc release prod 018f22e2-1865-7be8-9f45-35d90607d0f7
 ```
 
-A child-pool carve-out `pool:<child>:<incarnation>` can also leak, when a pool
-create or delete is interrupted. `DeletePool` never scans for these. It's
-safe to leave one in place, since the space just stays reserved. To reclaim
-it, release it by its full ID with `ipam alloc release <parent> pool:<child>:<incarnation>`.
+A child-pool carve-out `pool:<child>:<incarnation>` can still leak if creation
+stops before publication, or from an older interrupted deletion. If the child
+pool document retains its parent reference, retry `DeletePool` to finish
+deletion first. Without a surviving parent reference, recovery remains manual:
+`DeletePool` never scans parents or reclaims unknown old orphans, and returns
+`ErrNotFound` if both child documents are absent. A later create does not adopt
+the old incarnation or reclaim its carve-out. It's safe to leave that space
+reserved. To reclaim it, release it by its full ID with
+`ipam alloc release <parent> pool:<child>:<incarnation>`.
 The release is refused with `pool_in_use` while that child incarnation still
 has a pool or reservations document.
 

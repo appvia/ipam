@@ -387,6 +387,21 @@ func TestCreateAndDeleteChildCrashAtEveryWriteConverges(t *testing.T) {
 					if _, err := healthy.GetPool(t.Context(), "child"); !errors.Is(err, ErrNotFound) {
 						t.Fatalf("child remains after delete retry: %v", err)
 					}
+
+					for _, key := range []string{poolKey("child"), reservationsKey("child")} {
+						if _, _, err := base.Get(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
+							t.Fatalf("child document %s remains after delete retry: %v", key, err)
+						}
+					}
+
+					allocations, err := healthy.ListAllocations(t.Context(), "root")
+					assertNoError(t, err)
+
+					if len(allocations) != 0 {
+						t.Fatalf("parent allocations after delete retry = %#v, want none", allocations)
+					}
+
+					assertNoError(t, healthy.DeletePool(t.Context(), "root"))
 				})
 			}
 		}

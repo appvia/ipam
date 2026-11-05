@@ -53,9 +53,14 @@ func reservationsKey(poolID string) string { return reservationsPrefix + poolID 
 // with the same ID is ErrConflict (Reason pool_exists) without writes. Residue
 // of an interrupted create or delete is retried with backoff and then reported
 // as ErrConflict (Reason pool_incomplete), again without writes; DeletePool
-// clears it. A crash after the carve-out is committed but before the pool is
-// published leaves that carve-out reserved: it is safe because the space stays
-// reserved, and an operator may release it (see Release).
+// clears it. After a returned creation failure, compensation attempts to release
+// this call's carve-out with a context detached from caller cancellation and a
+// five-second timeout. It refuses release if either child document of this
+// incarnation remains. The original failure stays identifiable with errors.Is;
+// unexpected compensation errors are joined to it. This does not make creation
+// crash-proof: process death before publication can leave a carve-out without a
+// parent reference in child documents. That space remains reserved and requires
+// manual recovery (see Release); a later create does not reclaim it.
 func (client *Client) CreatePool(ctx context.Context, spec PoolSpec) (Pool, error) {
 	if err := validateClient(client); err != nil {
 		return Pool{}, err
@@ -219,7 +224,9 @@ func (client *Client) createPoolAttempt(
 // releaseOwnCarveOut withdraws the carve-out this CreatePool call created. The
 // ID is keyed by this call's incarnation, so it can never release another
 // incarnation's space. It records cooldown unless publication was impossible,
-// and refuses while any document of that incarnation exists.
+// and refuses while any document of that incarnation exists. Compensation is
+// detached from caller cancellation, bounded to five seconds, and preserves
+// cause, joining only unexpected cleanup errors.
 func (client *Client) releaseOwnCarveOut(
 	ctx context.Context, parent *ParentRef, publicationPossible bool, cause error,
 ) error {
@@ -940,14 +947,28 @@ func (client *Client) updatePoolCooldown(
 }
 
 // DeletePool removes a pool and releases its incarnation-keyed carve-out. It
-// is also the recovery path for every residue an interrupted create or delete
-// can leave: (a) a complete empty pool is deleted reservations first, then its
+// is also the recovery path for document residue from interrupted creation or
+// deletion: (a) a complete empty pool is deleted reservations first, then its
 // carve-out, then the pool document; (b) a pool document without reservations
 // of its incarnation is retained until its carve-out is released; (c) an empty
 // reservations document without its pool document is deleted (a non-empty one
 // is ErrConflict with Reason pool_not_empty). An in-flight creator whose
 // reservations document is removed this way withdraws its own pool document
 // after publishing it. If no document exists, DeletePool returns ErrNotFound.
+//
+// The child pool document is the durable parent reference until release is
+// confirmed; a failed release or final delete can be retried by a fresh client.
+// While only that document remains, GetPool returns ErrNotFound and CreatePool
+// reports pool_incomplete. A private deletion proof validates the child ID,
+// incarnation, parent association and CIDR, and rechecks the absence of matching
+// reservations on each parent CAS attempt. Only this path permits the retained
+// definition: public Release still refuses while either child document of the
+// carve-out's incarnation exists. Retries never delete a replacement incarnation
+// or extend cooldown for an already released carve-out.
+//
+// Without a surviving parent reference, DeletePool cannot discover a carve-out.
+// It never scans for old leaks or abandoned pre-publication reservations; these
+// require manual release once no creator can still be running (see Release).
 func (client *Client) DeletePool(ctx context.Context, poolID string) error {
 	if err := validateClient(client); err != nil {
 		return err

@@ -15,13 +15,29 @@
 //
 // Child-pool creation reserves space in the parent before publishing the child
 // pool document. The carve-out ID pool:<child>:<incarnation> includes the child
-// incarnation. If a process stops between those writes, that incarnation's
-// carve-out remains reserved and therefore cannot overlap another allocation.
-// A later CreatePool uses a fresh incarnation and leaves the earlier carve-out
-// safely abandoned.
+// incarnation. On a returned creation failure, compensation attempts to release
+// only that call's carve-out using a context detached from caller cancellation,
+// bounded to five seconds. Release is refused while either child document of
+// that incarnation remains. The original error identity is preserved; unexpected
+// cleanup failures are joined to it. This is not crash-proof creation: process
+// death before publication can leave a carve-out without any child documents.
+// A later CreatePool uses a fresh incarnation and does not reclaim that space.
+// The space remains reserved and therefore cannot overlap another allocation.
+//
+// Child deletion removes empty reservations first, releases the parent carve-out,
+// then conditionally deletes the child pool document. The pool document retains
+// the parent reference until release is confirmed, so a fresh client's DeletePool
+// can finish after a failed release or final delete. Until then GetPool reports
+// ErrNotFound and CreatePool reports pool_incomplete. A private deletion proof
+// checks the child ID, incarnation, parent association and CIDR, and rechecks
+// that no reservations of that incarnation exist before each parent CAS attempt.
+// Only this deletion path permits the retained pool document during release;
+// public Release is unchanged and refuses while either matching document exists.
 //
 // DeletePool deliberately never scans unrelated pools for abandoned carve-outs.
-// An operator may release one explicitly by its complete
+// With no surviving parent reference (including old leaks or process death
+// before child publication), recovery is manual. An operator may release a
+// carve-out explicitly by its complete
 // pool:<child>:<incarnation> ID. Release refuses while a pool or reservations
 // document of that child incarnation still exists. Releasing a carve-out is
 // only safe when no CreatePool for that child can still be running: a creator
