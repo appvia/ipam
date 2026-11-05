@@ -34,8 +34,7 @@
 | II. Test standards | | |
 | III. Technology choice | | |
 | IV. Accessibility | | |
-| V. Data residency | | |
-| VI. Data handling | | |
+| V. Data handling | | |
 
 ## Components
 
