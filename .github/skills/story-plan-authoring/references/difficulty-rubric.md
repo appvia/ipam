@@ -12,16 +12,19 @@ When two rows fit, pick the higher one.
 
 ## Executor
 
-The plan has one agent, and it's derived from the highest todo difficulty:
+Each todo names the executor for its own difficulty. The build orchestrator hands each todo to the executor it names, so a plan can mix them:
 
-- any todo is medium or high: `implementer-high`
-- every todo is low: `implementer-low`
+- low: `implementer-low`
+- medium or high: `implementer-high`
 
-Every todo's `Executor:` line names that plan-level agent, even a low todo in a high plan. For example:
+For example, in the same plan:
 
 ```
-Executor: implementer-high · difficulty: low · skills: typescript-node
+Executor: implementer-low · difficulty: low · skills: typescript-node
+Executor: implementer-high · difficulty: medium · skills: typescript-node
 ```
+
+The plan-level agent is `implementer-high` if any todo names it, otherwise `implementer-low`.
 
 ## Size
 
