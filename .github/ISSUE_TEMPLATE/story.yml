@@ -11,7 +11,7 @@ body:
     attributes:
       label: Spec
       description: "Spec path and the AC-n ids this Story delivers."
-      placeholder: "specs/REQ-0042-tenant-self-service/spec.md - AC-3, AC-4"
+      placeholder: "specs/REQ-000042-tenant-self-service/spec.md - AC-3, AC-4"
     validations:
       required: true
   - type: textarea

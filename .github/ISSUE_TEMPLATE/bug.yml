@@ -11,7 +11,7 @@ body:
     attributes:
       label: Spec
       description: "The violated acceptance criterion as specs/<REQ-folder>/spec.md#AC-n."
-      placeholder: "specs/REQ-0042-tenant-self-service/spec.md#AC-3"
+      placeholder: "specs/REQ-000042-tenant-self-service/spec.md#AC-3"
     validations:
       required: true
   - type: textarea

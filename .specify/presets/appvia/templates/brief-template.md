@@ -1,6 +1,6 @@
 # Brief: [REQUIREMENT TITLE]
 
-**Requirement**: [REQ-NNNN] ([owner/repo]#[issue])
+**Requirement**: [REQ-NNNNNN] ([owner/repo]#[issue])
 **Created**: [DATE]
 **Status**: Draft
 
