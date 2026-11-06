@@ -70,6 +70,10 @@ func (client *Client) CreatePool(ctx context.Context, spec PoolSpec) (Pool, erro
 		return Pool{}, &OpError{Op: "create pool", Pool: spec.ID, Err: err}
 	}
 
+	if err := validateMetadata(spec.Description, spec.Labels); err != nil {
+		return Pool{}, &OpError{Op: "create pool", Pool: spec.ID, Reason: "invalid_metadata", Err: err}
+	}
+
 	for attempt := 1; ; attempt++ {
 		pool, outcome, err := client.createPoolAttempt(ctx, spec)
 		if outcome == createFinished {
@@ -680,6 +684,10 @@ func (client *Client) UpdatePoolMetadata(
 
 	if err := validatePoolID(poolID); err != nil {
 		return &OpError{Op: "update pool", Pool: poolID, Err: err}
+	}
+
+	if err := validateMetadata(description, labels); err != nil {
+		return &OpError{Op: "update pool", Pool: poolID, Reason: "invalid_metadata", Err: err}
 	}
 
 	lock := client.poolLock(poolID)

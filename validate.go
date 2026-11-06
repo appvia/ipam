@@ -5,15 +5,67 @@ package ipam
 
 import (
 	"fmt"
+	"maps"
 	"net/netip"
+	"regexp"
 	"slices"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
 	minCooldown = time.Second
 	maxCooldown = 8760 * time.Hour
+
+	maxDescriptionBytes = 1024
+	maxLabels           = 64
+	maxLabelKeyLen      = 63
+	maxLabelValueLen    = 63
 )
+
+var labelKeyPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`)
+
+// validateMetadata checks only metadata supplied by a caller, not stored documents.
+func validateMetadata(description string, labels map[string]string) error {
+	if len(description) > maxDescriptionBytes {
+		return fmt.Errorf("description exceeds 1024 bytes: %w", ErrInvalidArgument)
+	}
+
+	if !utf8.ValidString(description) {
+		return fmt.Errorf("description is not valid UTF-8: %w", ErrInvalidArgument)
+	}
+
+	for _, character := range description {
+		if unicode.IsControl(character) && character != '\t' && character != '\n' {
+			return fmt.Errorf("description contains a control character: %w", ErrInvalidArgument)
+		}
+	}
+
+	if len(labels) > maxLabels {
+		return fmt.Errorf("more than 64 labels: %w", ErrInvalidArgument)
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(labels)) {
+		if key == "" {
+			return fmt.Errorf("label key is empty: %w", ErrInvalidArgument)
+		}
+
+		if len(key) > maxLabelKeyLen {
+			return fmt.Errorf("label key exceeds 63 characters: %w", ErrInvalidArgument)
+		}
+
+		if !labelKeyPattern.MatchString(key) {
+			return fmt.Errorf("label key has invalid characters: %w", ErrInvalidArgument)
+		}
+
+		if utf8.RuneCountInString(labels[key]) > maxLabelValueLen {
+			return fmt.Errorf("label value exceeds 63 characters: %w", ErrInvalidArgument)
+		}
+	}
+
+	return nil
+}
 
 // validatePolicy checks a policy given by a caller. StrategyDefault is
 // accepted only on create, where it resolves to StrategyBestFit.
