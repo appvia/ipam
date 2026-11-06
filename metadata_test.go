@@ -4,6 +4,7 @@
 package ipam
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -14,6 +15,140 @@ import (
 
 	"github.com/appvia/ipam/storage/memory"
 )
+
+func TestMetadataLimitsDoNotAffectReads(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	store := memory.New()
+	client := newTestClient(store)
+	const poolID = "legacy"
+
+	description := strings.Repeat("x", 2000)
+	labels := make(map[string]string, 65)
+	for index := range 64 {
+		labels[fmt.Sprintf("key%02d", index)] = "synthetic-value"
+	}
+
+	labels["-bad-"] = strings.Repeat("v", 100)
+	descriptionJSON, err := json.Marshal(description)
+	assertNoError(t, err)
+	labelsJSON, err := json.Marshal(labels)
+	assertNoError(t, err)
+
+	// Hand-written v1 envelopes deliberately bypass the production document
+	// codec and metadata write guards to represent pre-limit stored documents.
+	poolJSON := fmt.Sprintf(`{
+		"schema_version": 1,
+		"kind": "pool",
+		"pool_id": "legacy",
+		"incarnation": "0123456789abcdef0123456789abcdef",
+		"family": 4,
+		"cidrs": ["10.0.0.0/16"],
+		"description": %s,
+		"labels": %s
+	}`, descriptionJSON, labelsJSON)
+	reservationsJSON := fmt.Sprintf(`{
+		"schema_version": 1,
+		"kind": "reservations",
+		"pool_id": "legacy",
+		"incarnation": "0123456789abcdef0123456789abcdef",
+		"allocations": {
+			%q: {
+				"request": {"kind": "next", "prefix_length": 24},
+				"cidr": "10.0.0.0/24",
+				"description": %s,
+				"labels": %s,
+				"created_at": "2026-01-01T00:00:00Z"
+			}
+		}
+	}`, testAllocationID, descriptionJSON, labelsJSON)
+	_, err = store.CreateIfAbsent(ctx, poolKey(poolID), []byte(poolJSON))
+	assertNoError(t, err)
+	_, err = store.CreateIfAbsent(ctx, reservationsKey(poolID), []byte(reservationsJSON))
+	assertNoError(t, err)
+
+	assertMetadata := func(t *testing.T, gotDescription string, gotLabels map[string]string) {
+		t.Helper()
+
+		if gotDescription != description || !maps.Equal(gotLabels, labels) {
+			t.Error("legacy metadata did not read back unchanged")
+		}
+	}
+
+	t.Run("AC-4 GetPool preserves legacy metadata", func(t *testing.T) {
+		pool, err := client.GetPool(ctx, poolID)
+		assertNoError(t, err)
+		assertMetadata(t, pool.Description, pool.Labels)
+	})
+	t.Run("AC-4 ListPools preserves legacy metadata", func(t *testing.T) {
+		pools, err := client.ListPools(ctx)
+		assertNoError(t, err)
+
+		if len(pools) != 1 || pools[0].ID != poolID {
+			t.Fatalf("ListPools = %v, want only legacy pool", pools)
+		}
+
+		assertMetadata(t, pools[0].Description, pools[0].Labels)
+	})
+	t.Run("AC-4 GetAllocation preserves legacy metadata", func(t *testing.T) {
+		allocation, err := client.GetAllocation(ctx, poolID, testAllocationID)
+		assertNoError(t, err)
+		assertMetadata(t, allocation.Description, allocation.Labels)
+	})
+	t.Run("AC-4 ListAllocations preserves legacy metadata", func(t *testing.T) {
+		allocations, err := client.ListAllocations(ctx, poolID)
+		assertNoError(t, err)
+
+		if len(allocations) != 1 || allocations[0].ID != testAllocationID {
+			t.Fatalf("ListAllocations = %v, want only legacy allocation", allocations)
+		}
+
+		assertMetadata(t, allocations[0].Description, allocations[0].Labels)
+	})
+	t.Run("AC-4 UpdatePoolMetadata rejects invalid_metadata", func(t *testing.T) {
+		err := client.UpdatePoolMetadata(ctx, poolID, description, labels)
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Errorf("UpdatePoolMetadata error = %v, want ErrInvalidArgument", err)
+		}
+
+		var opErr *OpError
+		if !errors.As(err, &opErr) || opErr.Reason != "invalid_metadata" {
+			t.Errorf("UpdatePoolMetadata error = %#v, want reason invalid_metadata", err)
+		}
+
+		pool, err := client.GetPool(ctx, poolID)
+		assertNoError(t, err)
+		assertMetadata(t, pool.Description, pool.Labels)
+	})
+	t.Run("AC-4 UpdatePoolPolicy preserves legacy metadata", func(t *testing.T) {
+		assertNoError(t, client.UpdatePoolPolicy(ctx, poolID, PoolPolicy{Strategy: StrategyBestFit}))
+		pool, err := client.GetPool(ctx, poolID)
+		assertNoError(t, err)
+
+		if pool.Policy.Strategy != StrategyBestFit {
+			t.Errorf("strategy = %v, want best-fit", pool.Policy.Strategy)
+		}
+
+		assertMetadata(t, pool.Description, pool.Labels)
+		allocation, err := client.GetAllocation(ctx, poolID, testAllocationID)
+		assertNoError(t, err)
+		assertMetadata(t, allocation.Description, allocation.Labels)
+	})
+	t.Run("AC-4 Release succeeds with legacy metadata", func(t *testing.T) {
+		assertNoError(t, client.Release(ctx, poolID, testAllocationID))
+		allocations, err := client.ListAllocations(ctx, poolID)
+		assertNoError(t, err)
+
+		if len(allocations) != 0 {
+			t.Errorf("ListAllocations after Release = %v, want empty", allocations)
+		}
+
+		pool, err := client.GetPool(ctx, poolID)
+		assertNoError(t, err)
+		assertMetadata(t, pool.Description, pool.Labels)
+	})
+}
 
 func TestMetadataLimitsRejectWrites(t *testing.T) {
 	t.Parallel()
