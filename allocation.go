@@ -76,6 +76,12 @@ func (client *Client) allocateWithStatus(
 		}
 	}
 
+	if err := validateMetadata(spec.Description, spec.Labels); err != nil {
+		return Allocation{}, false, &OpError{
+			Op: "allocate", Pool: poolID, ID: spec.ID, Reason: "invalid_metadata", Err: err,
+		}
+	}
+
 	request, err := canonicalAllocationRequest(spec)
 	if err != nil {
 		return Allocation{}, false, &OpError{Op: "allocate", Pool: poolID, ID: spec.ID, Err: err}
@@ -554,6 +560,12 @@ func (client *Client) UpdateAllocationMetadata(
 		return &OpError{
 			Op: "update allocation", Pool: poolID, ID: id,
 			Err: fmt.Errorf("reserved allocation ID: %w", ErrInvalidArgument),
+		}
+	}
+
+	if err := validateMetadata(description, labels); err != nil {
+		return &OpError{
+			Op: "update allocation", Pool: poolID, ID: id, Reason: "invalid_metadata", Err: err,
 		}
 	}
 
