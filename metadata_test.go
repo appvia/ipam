@@ -157,6 +157,7 @@ func TestMetadataLimitsRejectWrites(t *testing.T) {
 	// ASCII keys versus rune-sized Unicode values.
 	description := strings.Repeat("é", 511) + "\t\n"
 	labels := make(map[string]string, 64)
+
 	for index := range 64 {
 		labels[fmt.Sprintf("k%02d%s", index, strings.Repeat("a", 60))] = strings.Repeat("界", 63)
 	}
@@ -197,6 +198,7 @@ func TestMetadataLimitsRejectWrites(t *testing.T) {
 				t.Run(test.name, func(t *testing.T) {
 					client := newTestClient(memory.New())
 					ctx := t.Context()
+
 					const poolID = "metadata-pool"
 
 					if operation != "create pool" {
@@ -207,6 +209,7 @@ func TestMetadataLimitsRejectWrites(t *testing.T) {
 					if operation == "update allocation" || operation == "allocate replay" {
 						initialDescription := "previous allocation"
 						initialLabels := map[string]string{"state": "previous"}
+
 						if operation == "allocate replay" {
 							initialDescription, initialLabels = description, labels
 						}
@@ -219,6 +222,7 @@ func TestMetadataLimitsRejectWrites(t *testing.T) {
 					}
 
 					var beforePool Pool
+
 					var beforeAllocations []Allocation
 
 					if operation != "create pool" {
@@ -309,9 +313,11 @@ func TestMetadataLimitsRejectWrites(t *testing.T) {
 					}
 
 					gotDescription, gotLabels := pool.Description, pool.Labels
+
 					if operation == "allocate" || operation == "allocate replay" || operation == "update allocation" {
 						allocation, err := client.GetAllocation(ctx, poolID, testAllocationID)
 						assertNoError(t, err)
+
 						gotDescription, gotLabels = allocation.Description, allocation.Labels
 					}
 
