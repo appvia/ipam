@@ -263,7 +263,20 @@ Commands:
 | `ipam completion bash\|zsh\|fish\|powershell` | Print a shell completion script. |
 
 `pool create` and `alloc create` also take `--description TEXT` and
-`--label key=value` (repeatable). `pool create` also takes the policy flags:
+`--label key=value` (repeatable).
+
+Caller-supplied pool and allocation metadata has these limits: descriptions
+must be valid UTF-8, at most 1024 bytes, with no Unicode control characters
+except tab and newline; at most 64 labels are allowed; label keys must be
+nonempty, at most 63 ASCII characters, and match
+`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`; label values may contain at most
+63 Unicode runes. Invalid metadata returns `ErrInvalidArgument` with reason
+`invalid_metadata`, and the CLI exits 2. Existing documents with over-limit
+metadata stay readable, but any metadata update must meet these limits. CLI
+`pool update --description` re-sends the current labels, so those labels must
+also meet the limits.
+
+`pool create` also takes the policy flags:
 
 - `--strategy best-fit|lowest`: the `next` strategy. Defaults to `best-fit`.
 - `--cooldown D` with `--cooldown-mode strict|fit-aware`: hold released CIDRs
