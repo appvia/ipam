@@ -521,14 +521,25 @@ func TestLibraryValidationErrorsExitTwo(t *testing.T) {
 
 	h.ok("pool", "create", "p", "--cidr", "10.0.0.0/24")
 
+	allocation, err := client.Allocate(t.Context(), "p", ipam.AllocationSpec{PrefixLength: 26})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	longDescription := strings.Repeat("a", 1025)
+	longLabelValue := strings.Repeat("v", 64)
+	controlDescription := "a\x01b"
+
 	cases := []struct {
 		name     string
 		args     []string
 		sentinel error
+		rejected string
 		library  func() error
 	}{
 		{
 			"cidr outside the pool", []string{"alloc", "create", "p", "--cidr", "192.168.0.0/26"}, ipam.ErrInvalidCIDR,
+			"",
 			func() error {
 				_, err := client.Allocate(t.Context(), "p",
 					ipam.AllocationSpec{CIDR: netip.MustParsePrefix("192.168.0.0/26")})
@@ -538,6 +549,7 @@ func TestLibraryValidationErrorsExitTwo(t *testing.T) {
 		},
 		{
 			"prefix length beyond the family", []string{"alloc", "create", "p", "--prefix-length", "33"}, ipam.ErrInvalidCIDR,
+			"",
 			func() error {
 				_, err := client.Allocate(t.Context(), "p", ipam.AllocationSpec{PrefixLength: 33})
 
@@ -546,11 +558,51 @@ func TestLibraryValidationErrorsExitTwo(t *testing.T) {
 		},
 		{
 			"allocation id is not a UUID", []string{"alloc", "create", "p", "--prefix-length", "26", "--id", "not-a-uuid"},
-			ipam.ErrInvalidArgument,
+			ipam.ErrInvalidArgument, "",
 			func() error {
 				_, err := client.Allocate(t.Context(), "p", ipam.AllocationSpec{ID: "not-a-uuid", PrefixLength: 26})
 
 				return err
+			},
+		},
+		{
+			"AC-5 pool create rejects oversized description",
+			[]string{"pool", "create", "q", "--cidr", "10.1.0.0/24", "--description", longDescription},
+			ipam.ErrInvalidArgument, longDescription,
+			func() error {
+				_, err := client.CreatePool(t.Context(), ipam.PoolSpec{
+					ID: "q", CIDRs: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/24")}, Description: longDescription,
+				})
+
+				return err
+			},
+		},
+		{
+			"AC-5 alloc create rejects invalid label key",
+			[]string{"alloc", "create", "p", "--prefix-length", "26", "--label", "-bad=v"},
+			ipam.ErrInvalidArgument, "-bad",
+			func() error {
+				_, err := client.Allocate(t.Context(), "p", ipam.AllocationSpec{
+					PrefixLength: 26, Labels: map[string]string{"-bad": "v"},
+				})
+
+				return err
+			},
+		},
+		{
+			"AC-5 pool update rejects oversized label value",
+			[]string{"pool", "update", "p", "--label", "k=" + longLabelValue},
+			ipam.ErrInvalidArgument, longLabelValue,
+			func() error {
+				return client.UpdatePoolMetadata(t.Context(), "p", "", map[string]string{"k": longLabelValue})
+			},
+		},
+		{
+			"AC-5 alloc update rejects control character description",
+			[]string{"alloc", "update", "p", allocation.ID, "--description", controlDescription},
+			ipam.ErrInvalidArgument, controlDescription,
+			func() error {
+				return client.UpdateAllocationMetadata(t.Context(), "p", allocation.ID, controlDescription, nil)
 			},
 		},
 	}
@@ -571,8 +623,19 @@ func TestLibraryValidationErrorsExitTwo(t *testing.T) {
 			if !strings.Contains(res.stderr, "ipam: ") {
 				t.Fatalf("stderr %q lacks the error", res.stderr)
 			}
+
+			if tc.rejected != "" && strings.Contains(res.stderr, tc.rejected) {
+				t.Fatal("stderr contains rejected metadata")
+			}
 		})
 	}
+
+	t.Run("AC-5 valid label exits zero", func(t *testing.T) {
+		res := h.run("pool", "update", "p", "--label", "team=a")
+		if res.code != exitOK {
+			t.Fatalf("exit %d, want %d; stderr %q", res.code, exitOK, res.stderr)
+		}
+	})
 }
 
 // fileURL turns a directory into a file URL that parses on every OS: on Windows
