@@ -22,10 +22,12 @@ func TestMetadataLimitsDoNotAffectReads(t *testing.T) {
 	ctx := t.Context()
 	store := memory.New()
 	client := newTestClient(store)
+
 	const poolID = "legacy"
 
 	description := strings.Repeat("x", 2000)
 	labels := make(map[string]string, 65)
+
 	for index := range 64 {
 		labels[fmt.Sprintf("key%02d", index)] = "synthetic-value"
 	}
@@ -131,6 +133,7 @@ func TestMetadataLimitsDoNotAffectReads(t *testing.T) {
 		}
 
 		assertMetadata(t, pool.Description, pool.Labels)
+
 		allocation, err := client.GetAllocation(ctx, poolID, testAllocationID)
 		assertNoError(t, err)
 		assertMetadata(t, allocation.Description, allocation.Labels)
