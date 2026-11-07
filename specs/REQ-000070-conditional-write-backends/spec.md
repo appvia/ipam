@@ -3,7 +3,7 @@
 **Requirement**: REQ-000070 ([source](https://github.com/appvia/ipam/issues/70))
 **Spec path**: `specs/REQ-000070-conditional-write-backends/spec.md`
 **Created**: 2026-11-05
-**Status**: Draft - clarification required before G2
+**Status**: Draft - ready for G2 review
 **Input**: Approved `brief.md`, `clarifications.md`, and the source Requirement
 
 ## User journeys *(mandatory)*
@@ -80,7 +80,11 @@ successful diagnostic proves all conditional operations are enforced.
   unverified, and FAIL for unverified without consent. A classification FAIL
   must not itself stop other read-only checks. Existing aggregation applies:
   any failed check produces a failed report and exit status 6; warnings alone
-  do not fail the command. Write-probe behavior without consent is Q1 below.
+  do not fail the command. When an unverified backend lacks consent, doctor
+  must skip all existing write-probe checks and tell the operator that they were
+  skipped because the backend is unverified and no opt-in was supplied. This
+  applies even when the operator requests a write-permission expectation.
+  With consent, existing write-probe behavior remains unchanged.
 - **FR-7 - Validation and compatibility**: Consent must never bypass existing
   URL syntax validation. Verified backends retain existing opening and operation
   behavior, except for the additional doctor classification result. Classification
@@ -217,6 +221,13 @@ successful diagnostic proves all conditional operations are enforced.
   storage or another existing operation failure, **When** the relevant opening
   or operation is attempted, **Then** the existing error behavior is preserved;
   classification is not presented as evidence of connectivity or permission.
+- **AC-28**: **Given** an unverified backend without consent and readable pools,
+  including pools named in write-permission expectations, **When** doctor runs
+  in either table or structured output mode, **Then** it performs zero
+  write-probe operations, reports that those checks were skipped because the
+  backend is unverified and no opt-in was supplied, continues available
+  read-only checks, and retains the classification FAIL, overall fail result
+  and exit status 6 rather than treating a skipped probe as a successful test.
 
 ## Non-functional requirements *(mandatory)*
 
@@ -236,6 +247,9 @@ successful diagnostic proves all conditional operations are enforced.
 - **NFR-6**: Changed user-facing documentation and diagnostic presentation must
   satisfy 100% of applicable WCAG 2.2 level AA criteria; classification statuses
   remain readable as text rather than depending only on colour (constitution IV).
+- **NFR-7**: Doctor performs exactly 0 write-probe operations per invocation
+  against an unverified backend without consent, regardless of requested
+  write-permission expectations (AC-28).
 
 ## Key entities *(include if the feature involves data)*
 
@@ -261,8 +275,5 @@ successful diagnostic proves all conditional operations are enforced.
 
 ## Open questions *(mandatory, empty before G2)*
 
-1. **Q1 - Doctor write probes without consent**: When doctor reports an
-   unverified backend as FAIL because no opt-in was supplied, should its existing
-   write-probe checks be skipped entirely, or may they still run? The Requirement
-   explicitly preserves other read-only checks but does not settle write probes;
-   the Requirement author must answer before G2.
+None. The Requirement author's answer to Q1 is recorded in
+[clarifications.md](clarifications.md) and reflected in FR-6, AC-28 and NFR-7.

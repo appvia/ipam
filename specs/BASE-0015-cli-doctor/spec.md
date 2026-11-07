@@ -13,10 +13,14 @@ check: PASS for verified, WARN for allowed unverified, FAIL for unverified witho
 consent. This check is included in both existing output formats and participates
 in the existing result and exit-status aggregation. Classification FAIL does not
 itself suppress other read-only checks (Requirement AC-13 through AC-16). Thus
-existing exact check inventories below gain this result. Whether existing write
-probes run without consent remains Q1 in that Requirement and must be settled
-before G2. No repair of the existing probe or proof of conditional deletion is
-included. Existing AC identifiers and baseline evidence are retained.
+existing exact check inventories below gain this result. For unverified backends
+without consent, all existing write probes are skipped, including when explicit
+write-permission expectations are supplied; the operator receives a message
+explaining the missing consent, read-only checks continue, and classification
+FAIL still yields a failed report and exit status 6 (Requirement AC-28). With
+consent, existing probe behavior is unchanged. No repair of the existing probe
+or proof of conditional deletion is included. Existing AC identifiers and
+baseline evidence are retained.
 
 ## User journeys *(mandatory)*
 
