@@ -6,6 +6,18 @@
 **Status**: Draft
 **Input**: Existing code at appvia/ipam@3833bccf042b01540a5ab4ea002e8ee73c7f19b7
 
+## Proposed Requirement overlay
+
+[REQ-000070](../REQ-000070-conditional-write-backends/spec.md) adds default refusal
+for unverified selections through either backend selector and introduces
+`--allow-unverified-backend` and `IPAM_ALLOW_UNVERIFIED_BACKEND=true`. An explicit
+flag value takes precedence, including false. Allowed unverified use emits one
+support-risk warning line per invocation on stderr without changing ordinary
+stdout formatting (Requirement AC-6, AC-9 through AC-12, AC-26). Refusal and
+warning guidance must omit private backend configuration (Requirement AC-24).
+Existing command contracts below apply after the new gate allows access; doctor
+has its own reporting exception in the Requirement.
+
 ## User journeys *(mandatory)*
 
 ### Journey 1 - Manage pools and allocations (Priority: P1)

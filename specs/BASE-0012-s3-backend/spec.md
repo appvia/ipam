@@ -6,6 +6,16 @@
 **Status**: Draft
 **Input**: Existing code at appvia/ipam@3833bccf042b01540a5ab4ea002e8ee73c7f19b7
 
+## Proposed Requirement overlay
+
+[REQ-000070](../REQ-000070-conditional-write-backends/spec.md) defines the verified
+support boundary, default refusal and explicit consent for URL-based opening.
+Amazon S3 is the reference target; other S3-compatible endpoints require the
+specified opt-in rather than being implicitly supported. The endpoint
+configuration reference must link to the shared Supported backends documentation
+(Requirement AC-21). Conditional object-operation semantics and network-free
+direct construction remain unchanged. No live enforcement test is introduced.
+
 ## User journeys *(mandatory)*
 
 ### Journey 1 - Use S3 for conditional object storage (Priority: P1)
@@ -184,8 +194,8 @@ without requiring object mutations or bucket-administration permissions.
 - Directory storage and Azure Blob authentication or storage behavior: see [BASE-0011 local-backend](../BASE-0011-local-backend/spec.md) and [BASE-0013 azblob-backend](../BASE-0013-azblob-backend/spec.md).
 - Creating buckets, changing bucket versioning or IAM policies, managing credentials, and recovering historical object versions. The backend uses an existing bucket and the AWS SDK credential chain.
 - Client-level reconciliation of an unknown write outcome, pool or allocation behavior, and transactions spanning multiple objects.
-- Guarantees that every S3-compatible endpoint enforces the conditional headers it receives. Supported endpoints are those that enforce `If-None-Match` and `If-Match` on `PutObject` and `If-Match` on `DeleteObject`; Amazon S3 is the reference target (maintainer decision, 2026-11-03). Checking another endpoint is the operator's responsibility, for example by running the BASE-0010 storage-contract suite against it. The CI integration runner does not prove conditional delete: it skips those cases for emulators known to ignore `If-Match`, and sending the header alone does not establish server enforcement. Detecting a non-enforcing endpoint at open time is tracked in appvia/ipam#7.
+- Guarantees that every S3-compatible endpoint enforces the conditional headers it receives. Supported endpoints are those that enforce `If-None-Match` and `If-Match` on `PutObject` and `If-Match` on `DeleteObject`; Amazon S3 is the reference target (maintainer decision, 2026-11-03). Checking another endpoint is the operator's responsibility, for example by running the BASE-0010 storage-contract suite against it. The CI integration runner does not prove conditional delete: it skips those cases for emulators known to ignore `If-Match`, and sending the header alone does not establish server enforcement. URL-based classification, default refusal and explicit consent are specified in [REQ-000070](../REQ-000070-conditional-write-backends/spec.md), sourced from https://github.com/appvia/ipam/issues/70; probing at open time remains out of scope.
 
 ## Open questions *(mandatory, empty before G2)*
 
-- None. Questions raised during the baseline run were answered by the maintainer on 2026-11-03 and moved to issues: appvia/ipam#41, appvia/ipam#7.
+- None for this baseline. The former open-time probing proposal was replaced by the classification-and-consent Requirement at https://github.com/appvia/ipam/issues/70; the separate baseline follow-up remains appvia/ipam#41.
