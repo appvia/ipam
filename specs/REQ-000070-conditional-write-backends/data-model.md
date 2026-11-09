@@ -18,8 +18,13 @@
 
 The public enum's empty value is not a policy decision. A future enum expansion
 requires contract review; consumers must not treat an unknown value as verified.
-The existing loopback-only Azure form is the scope clarification in the plan,
-not an additional value introduced by this design.
+The test-only container-form Azure target has an empty `azure.AccountURL`;
+account-form targets have the validated account URL. This existing parsed
+distinction yields Unverified for container form and Verified for account form
+without reading connection-string configuration. Constructor loopback and
+connection-string checks remain mandatory after explicit consent. No third
+classification or supported provider is introduced (FR-1/Q2; AC-3, AC-5, AC-7,
+AC-8, AC-17, AC-23).
 
 ## State transitions
 

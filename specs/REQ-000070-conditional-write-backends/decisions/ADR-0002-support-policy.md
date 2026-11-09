@@ -1,8 +1,8 @@
 # ADR-0002: Centralize pure host classification and explicit opening consent
 
 **Status**: Proposed for G3
-**Trace**: AC-1..AC-12, AC-17..AC-18, AC-21, AC-23..AC-27; FR-7/FR-8;
-constitution I/II/V.
+**Trace**: AC-1..AC-12, AC-15..AC-18, AC-21, AC-23..AC-28;
+FR-1 (answered Q2), FR-7/FR-8; constitution I/II/V.
 
 ## Context
 
@@ -42,9 +42,13 @@ diagnostics are static and library opening is silent. All support references
 use `https://github.com/appvia/ipam#supported-backends`.
 
 Direct backend construction and `New(store, ...)` remain caller-managed under
-the approved scope. The loopback-only container-form Azure path is not added to
-the verified support set; its public classification requires the specific G3
-scope confirmation recorded in the plan.
+the approved scope. The [Requirement author's Q2 answer](https://github.com/appvia/ipam/issues/70#issuecomment-6742245024)
+assigns Unverified to the existing test-only container-form Azure path.
+Distinguish it by the empty `azure.AccountURL` produced by `parseAzblob`, not
+by inspecting connection-string configuration. Apply ordinary refusal and
+explicit consent plus the same doctor matrix. Emulator tests explicitly opt
+in; construction still enforces existing loopback and connection-string guards.
+Verified account-form Azure behavior and the verified support set are unchanged.
 
 ## Alternatives considered
 
@@ -75,6 +79,12 @@ function assignments still compile. Context reuse can unintentionally spread
 consent to another opening, so examples derive it inline and tests assert the
 parent remains unmarked. Existing configuration and verified-backend operations
 stay covered by regression tests.
+
+The emulator form has a defined classification without becoming a supported
+production endpoint. Successful-opening fixtures need explicit consent;
+constructor-rejection tests also opt in so they still exercise missing or
+forbidden configuration rather than stopping at the policy gate. Classification
+remains network/configuration-free, and consent never bypasses authentication.
 
 The broad AWS host policy, HTTP grammar and SDK default-resolution assumptions
 remain limited by the approved spec. They are not endpoint authentication or

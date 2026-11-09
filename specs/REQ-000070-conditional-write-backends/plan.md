@@ -2,18 +2,20 @@
 
 **Spec**: `specs/REQ-000070-conditional-write-backends/spec.md`
 **Created**: 2026-11-07
-**Status**: Draft for G3; emulator classification boundary requires confirmation
+**Status**: Draft for G3; Q2 answered and incorporated
 **Proposed risk**: medium
 
 ## Summary
 
 Classify validated backend selections in the root Go library, refuse unverified
-S3 endpoints by default, and expose explicit opening consent independently from
+backends by default, and expose explicit opening consent independently from
 classification. The CLI uses the same policy and emits one invocation-scoped
 warning. Doctor reports the policy result before running available diagnostics;
 without consent it executes read-only checks and never enters its write-probe
 path. Storage conditions, credentials and document formats remain unchanged.
-This covers AC-1 through AC-28 without network activity during opening.
+This covers AC-1 through AC-28 without network activity during opening. The
+author's Q2 answer assigns Unverified to the existing test-only container-form
+Azure path without changing its loopback/authentication restrictions.
 
 ## Technical context
 
@@ -68,7 +70,7 @@ as a technology decision. No existing ADR files were found in the target.
 | `open.go`: `parseOpenURL`, `parseS3`, `validateEndpoint`, `openTarget` | Reuse validated structured targets; endpoint classification is not a second permissive parser. Keep redacted `invalidURL` errors. | AC-1..AC-4, AC-23..AC-25 |
 | `open.go`: `Open`, `OpenStorage`, `openAzure`; `client.go`: `Option`, `New`; `storage/context.go`: `WithAccessPropagationRetry` | Reuse the existing typed-context opt-in pattern for opening consent; preserve both opener signatures and client-option evaluation order. | AC-5, AC-7, AC-8, AC-27 |
 | `storage/s3/s3.go`: `Config`, `New`, conditional operation methods | Constructor is network-free; conditions already exist and remain unchanged. Update endpoint reference documentation only in later implementation. | AC-17, AC-20, AC-21 |
-| `storage/azblob/azblob.go`: `New`, `newClients`; `open_test.go` | Account URLs and loopback-only connection-string URLs are distinct existing paths. Do not weaken their authentication guards. | AC-3, AC-17, AC-23, scope constraint |
+| `open.go`: `parseAzblob`; `storage/azblob/azblob.go`: `New`, `newClients`, `parseAzuriteConnectionString`, `requireLoopbackURL`; `open_test.go` | Nonempty parsed `azure.AccountURL` distinguishes account form from container form. Classify the latter Unverified without reading connection-string configuration; preserve constructor loopback/authentication guards. | FR-1/Q2; AC-3, AC-5, AC-7, AC-8, AC-17, AC-23 |
 | `doc.go`, `storage/storage.go`, `storage/storagetest/contract.go` | CAS is the correctness boundary. A support label is not enforcement; retain full provider qualification including conditional delete. | AC-18, AC-19, AC-20 |
 | `cmd/ipam/commands.go`: `cli`, `backendURL`, `client`, `leaf` | Centralize consent resolution with backend selection; all pool/allocation commands flow through the same gate. Keep help/version backend-free. | AC-6, AC-9..AC-12, AC-26 |
 | `cmd/ipam/main.go`: `runCLI`, injectable openers, `exitCode` | Carry effective consent into injected openers; refusal uses existing generic exit 1, not a new usage or conflict mapping. | AC-6, AC-11, AC-27 |
@@ -222,13 +224,25 @@ and storage-contract regression tests. Update custom-endpoint fixtures with
 explicit consent only where successful opening is intended, never weaken a
 precondition or remove a safety test.
 
+Add `TestAzureContainerFormUnverifiedPolicy` for FR-1/Q2, AC-5, AC-7, AC-8,
+AC-15..AC-17, AC-23 and AC-28: classify fictional `azblob://sample-container/demo`
+without configuration or I/O; both URL openers refuse without consent before
+construction and allow existing emulator construction with explicit consent.
+Table/JSON doctor cases retain FAIL/exit 6 and zero writes without consent,
+and WARN with consent when no other check fails. Preserve verified account-form
+behavior (AC-3/AC-27). Adapt existing container-form success fixtures to opt in;
+also supply consent to constructor-rejection tests so missing/non-loopback or
+invalid connection strings still reach and prove the existing guards. Keep URL
+rejection tests with and without consent. Use only synthetic configuration and
+fake transports; existing emulator CI remains test-only, not qualification.
+
 ### Validation guide for implementation
 
 Prerequisites: pinned Go/linter installed, synthetic fixtures and fake transports;
 no production credentials or services. From the product checkout:
 
 ```sh
-go test . ./cmd/ipam -run 'Test(BackendClassification|UnverifiedClassification|VerifiedBackend|OpenRefuses|OpenAllows|OpenOptions|OpeningConsent|ClassifyBackend|CLIUnverified|CLIRefuses|CLIExplicitFalse|CLIConsent|DoctorVerified|DoctorAllowed|DoctorRefused|DoctorRefusal|DoctorUnverified|DoctorConsent|Classification|ConsentNever|BackendPolicy|BackendSupport|SupportedBackends|UnverifiedBackendMigration)' -count=1
+go test . ./cmd/ipam -run 'Test(BackendClassification|AzureContainerForm|UnverifiedClassification|VerifiedBackend|OpenRefuses|OpenAllows|OpenOptions|OpeningConsent|ClassifyBackend|CLIUnverified|CLIRefuses|CLIExplicitFalse|CLIConsent|DoctorVerified|DoctorAllowed|DoctorRefused|DoctorRefusal|DoctorUnverified|DoctorConsent|Classification|ConsentNever|BackendPolicy|BackendSupport|SupportedBackends|UnverifiedBackendMigration)' -count=1
 ```
 
 Expected: every new test runs, the assertions above pass, and diagnostics use
@@ -250,19 +264,19 @@ behavior and its corruption risk; prefer an informed explicit opt-in over a
 silent rollback. Provider configuration is deferred; document library entry
 points so a later provider Story can expose matching consent (FR-5 scope).
 
-## Specification boundary requiring G3 attention
+## Resolved specification boundary: Q2
 
-The approved spec's production classification table does not assign a public
-classification to `azblob://<container>/<prefix>`, while BASE-0009 AC-9 and
-`open.go` retain that loopback-only emulator opening form. The spec says the
-test-only path remains out of scope and forbids expanding the verified set.
-Do not label that emulator a verified service, remove its existing guards, or
-invent a third supported provider. The contracts below deliberately cover the
-FR-1 selections only. Before implementation, the approver must confirm that
-the existing test-only form remains outside the public classification contract,
-or request a separate clarification assigning its diagnostic result. That
-specific surface is NEEDS CLARIFICATION; this draft is not unconditional G3
-readiness. The approved spec is unchanged.
+The [Requirement author's numbered Q2 answer](https://github.com/appvia/ipam/issues/70#issuecomment-6742245024)
+assigns Unverified to `azblob://<container>/<prefix>`. It is recorded in
+[clarifications.md](clarifications.md) and minimally incorporated into FR-1;
+no AC IDs changed. The parsed target's empty `azure.AccountURL` identifies this
+existing form without consulting credentials, environment or a live endpoint.
+It follows the existing unverified refusal, consent and doctor contracts,
+including zero probes without operator consent. Emulator tests explicitly opt
+in; consent never skips constructor loopback or connection-string checks.
+Account-form Azure remains verified. No supported provider, URL grammar,
+authentication behavior or runtime emulator detection is added (FR-1/FR-7 and
+the emulator scope constraint). Q2 is resolved; G3 approval is still human-owned.
 
 ## Risks
 
@@ -271,7 +285,7 @@ readiness. The approved spec is unchanged.
 | URL classification is mistaken for enforcement or endpoint authenticity | Medium | High | Static support-policy wording, no learned verification, full storage-contract guidance; AC-18..AC-20. |
 | Doctor diagnostic consent leaks into ordinary access or probe enablement | Low | High | Separate operator-consent/probe values and recording-store assertions; AC-6, AC-28. |
 | A consented context is reused for an unrelated opening | Low | High | Narrow derived-context scope, unchanged parent, no global state; assert consent isolation and CLI precedence. AC-7, AC-11. |
-| Existing emulator form is silently promoted or broken | Medium | Medium | G3 confirmation of the scope gap above; preserve loopback guards and baseline tests. |
+| Existing emulator form is silently promoted or its restrictions bypassed | Low | Medium | Apply the answered Q2 Unverified policy; explicit emulator-test consent, retained constructor/URL rejection tests and unchanged loopback guards. FR-1; AC-5, AC-7, AC-23. |
 | Breaking refusal interrupts custom-endpoint automation | High | Medium | Atomic docs/options release and changelog migration; AC-6, AC-19, AC-22. |
 
 See [threat-model.md](threat-model.md) for assets, boundaries, security threats,

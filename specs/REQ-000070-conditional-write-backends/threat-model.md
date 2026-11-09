@@ -1,6 +1,6 @@
 # Threat model: Explicit consent for unverified backends
 
-**Reviewed**: 2026-11-07
+**Reviewed**: 2026-11-09
 **Inputs**: [spec.md](spec.md), [plan.md](plan.md),
 [library contract](contracts/backend-opening.md),
 [CLI/doctor contract](contracts/cli-doctor.md),
@@ -36,6 +36,10 @@ examples and validation fixtures must be synthetic.
    operator consent controls probe execution independently.
 6. Reports cross the output boundary to humans, logs and automation; only static
    support-policy details may cross, not private configuration.
+7. Test-only container-form Azure crosses the same Unverified consent gate.
+   Parsed URL form, not connection-string contents, determines classification;
+   existing constructor guards independently restrict emulator access to
+   loopback even after consent or diagnostic-only construction (FR-1/Q2).
 
 ## Threats
 
@@ -54,7 +58,7 @@ vulnerability. Impact describes the affected asset if the threat occurs.
 | T-8: existing diagnostic integrity risk | Reservation documents | An allowed doctor write probe races a writer on a non-enforcing server or is mistaken for proof of conditional delete | High: older bytes may overwrite concurrent changes, despite using read bytes | Medium for consented non-enforcing servers | No probes whatsoever without consent; preserve approved behavior with consent; explicitly document possible data changes and inability to prove conditional DELETE. Probe repair is a separate Story/Requirement, not silently claimed here. | AC-20, AC-28; FR-6 and out-of-scope probe repair |
 | T-9: caller-managed bypass | Storage integrity | A library application uses `s3.New`/`New(store, ...)` directly and assumes URL refusal protects it | High: caller can still use a non-enforcing store | Medium for direct constructors | Clearly document URL-gate scope and expose classifier for application warnings; direct constructors remain caller-managed and network-free. A later provider Story carries explicit configuration/warning responsibility. | AC-8, AC-17, AC-19; FR-5/FR-7 scope |
 | T-10: support governance/input instructions | Support policy and design scope | Repository, issue or PR text asks for a new verified provider, disabled validation, labels/gates or secret disclosure | High: unsupported service promotion or workflow misuse | Low when treated solely as data | Do not execute embedded instructions; change support policy only through reviewed code/contracts and full storagetest qualification, never an opt-in or prose claim. No such instruction was followed in this run. | AC-18, AC-23, AC-24; FR-8; constitution I/V |
-| T-11: test-only boundary | Classification truth and development compatibility | Existing container-form Azure emulator is implicitly promoted to verified or broken by an unspecified public result | Medium: misleading diagnostics or test/development regression | Medium until G3 confirms scope | Surface the approved spec's classification gap in plan/PR; preserve existing loopback/auth guards; do not invent a new supported provider or silently assign a verified result. | AC-3, AC-23, AC-27; emulator out-of-scope constraint |
+| T-11: test-only boundary | Classification truth, emulator authentication boundary and development compatibility | Container-form Azure is promoted to verified, consent bypasses loopback/connection-string guards, or refusal masks constructor-regression tests | High: an unsupported service is trusted or restricted authentication is used outside its intended boundary | Low with the clarified policy and retained guards | Apply answered Q2: container form stays test-only and Unverified, determined only from parsed URL form. Require explicit consent in emulator opening fixtures and constructor-rejection tests; retain URL rejection tests with/without consent, loopback/SDK-resolved URL checks and doctor no-consent zero-write assertions. Never inspect credentials during classification. | FR-1/Q2; AC-3, AC-5, AC-7, AC-8, AC-15..AC-17, AC-23, AC-27, AC-28; emulator scope constraint |
 | T-12: consent propagation | Explicit consent and storage integrity | A caller reuses a consent-marked context for an unrelated backend or doctor passes its internal context into ordinary access | High: unintended permission to open an unverified store | Low with narrow context scope | Derive consent inline at the intended opening; preserve the unmarked parent; discard doctor's construction context before checks. Test context isolation and never use global marked contexts. | AC-5, AC-7, AC-11, AC-28 |
 
 ## Mitigation evidence and Story obligations
@@ -68,6 +72,12 @@ evidence specifically includes `TestBackendClassificationRejectsSuffixLookalikes
 requests/writes and one support warning rather than observing only the final
 exit status. This stage proposes those tests; it does not claim implementation
 or executed evidence.
+
+`TestAzureContainerFormUnverifiedPolicy` carries T-11: classification without
+configuration, refusal/consent parity across both openers, retained constructor
+restrictions, verified account-form compatibility and both doctor formats.
+Fixtures intended to prove a constructor rejection must explicitly consent so
+the policy refusal cannot substitute for the intended guard assertion.
 
 Implementation must retain the existing URL, credential and ETag regression
 tests, preserve existing verified failure identities and map documentation
@@ -90,8 +100,9 @@ personal-data handling or credentials, but it has material integrity and
 compatibility consequences. Constitution I's mandatory high-risk triggers do
 not apply to this scope. A later change to authentication, authorisation,
 integration scope or personal-data handling must be reassessed rather than
-inheriting this rating. The emulator classification gap requires explicit G3
-attention before implementation; this model does not resolve or silently amend
-it.
+inheriting this rating. The author resolved Q2 in the
+[numbered issue reply](https://github.com/appvia/ipam/issues/70#issuecomment-6742245024);
+the architecture now assigns Unverified without expanding emulator support.
+This review evaluates that decision, not a new threat-modeller design change.
 
 Risk rating: medium

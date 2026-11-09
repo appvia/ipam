@@ -1,6 +1,6 @@
 # Contract: Library classification and URL opening
 
-**Status**: Proposed at G3; covers the FR-1 production selections.
+**Status**: Proposed at G3; covers FR-1 including the answered Q2 test-only form.
 **Consumers**: Root library callers, CLI, later Terraform provider integration.
 
 ## Public API
@@ -63,6 +63,7 @@ All entry points reuse `parseOpenURL` and one private classifier over
 | Account-form Azure Blob under `.blob.core.windows.net` | verified | AC-3 |
 | File or memory | verified | AC-3 |
 | S3 with any other endpoint hostname | unverified | AC-4, AC-18, AC-25 |
+| Container-form Azure Blob (empty parsed `azure.AccountURL`, test-only) | unverified | FR-1/Q2; AC-5, AC-7, AC-8, AC-17, AC-23 |
 
 For endpoint matching use the parsed endpoint's `Hostname()`, ASCII case-folded
 to lowercase, not its URL text, `Host` with port, bucket, prefix, query or
@@ -81,9 +82,17 @@ inspected for hidden configuration overrides. There are zero DNS lookups,
 credential reads, requests, probes, timers or learned classifications in
 `ClassifyBackend`. (AC-1, AC-17, AC-18; no-auth/no-grammar-change constraints.)
 
-Container-form Azure emulators are outside this table. Do not expand the public
-verified list to cover them implicitly; resolve the plan's G3 scope question
-before assigning that existing test-only URL a public classification.
+The [Requirement author's Q2 answer](https://github.com/appvia/ipam/issues/70#issuecomment-6742245024)
+classifies container-form Azure as Unverified. Use `parseAzblob`'s existing
+empty/nonempty `azure.AccountURL` distinction, not the connection string or its
+contents, to distinguish the two Azure forms. Classifying container form does
+not inspect configuration or prove a loopback endpoint. Ordinary opening
+without consent refuses before construction; with consent the existing
+constructor still validates the connection string, loopback-only endpoint and
+SDK-resolved URLs. Missing or forbidden configuration is not bypassed. Emulator
+tests explicitly consent, including tests intended to reach constructor guards.
+Account-form Azure stays verified; no runtime detection or expanded emulator
+support is introduced. (FR-1/Q2; AC-3, AC-5, AC-7, AC-8, AC-17, AC-23, AC-27.)
 
 ## Opening outcomes
 
@@ -106,7 +115,7 @@ storage operations. (AC-5, AC-7, AC-17, AC-27.)
 Existing calls and fixed-arity opener function assignments still compile.
 `Option` remains the existing `func(*Client)` type; do not replace it with a new
 interface or require callers to convert `[]Option`. Direct backend construction
-and `New(store, ...)
+and `New(store, ...)`
 remain caller-managed escape surfaces outside the URL policy; no backend is
 marked verified on that basis. (FR-7 scope; AC-17, AC-18.)
 
@@ -115,13 +124,21 @@ marked verified on that basis. (FR-7 scope; AC-17, AC-18.)
 Use the common documentation URL:
 `https://github.com/appvia/ipam#supported-backends`.
 
-The library refusal states that the S3 endpoint is unverified, requires
-`If-None-Match: *` and `If-Match: <etag>` on PutObject and `If-Match: <etag>` on
-DeleteObject, warns that ignoring them risks concurrent corruption, names the
+The library refusal states that the backend is unverified and conditional
+creation, replacement and deletion must be enforced. Explain the S3 conditions
+as `If-None-Match: *` and `If-Match: <etag>` on PutObject and `If-Match: <etag>` on
+DeleteObject, without misidentifying an Azure backend as S3. Use static wording
+that warns that ignoring conditions risks concurrent corruption, names the
 applicable library option and both CLI/environment opt-ins, and links to that
 URL. It never interpolates the input URL, endpoint, bucket, prefix, credentials
 or constructor errors into this policy message. Normal invalid URL and verified
 constructor errors retain existing redaction rules. (AC-5, AC-6, AC-21, AC-24.)
+
+README support guidance must distinguish test-only container-form Azure
+(Unverified, explicit consent and unchanged loopback restrictions) from
+verified account-form Azure, rather than describing every Azure URL as
+verified. This is classification of an existing test path, not a new supported
+service (FR-1/Q2; AC-19, AC-21).
 
 The README section and `s3.Config.Endpoint` doc comment use that same anchor.
 Operator contract-suite guidance must include conditional delete, with isolated

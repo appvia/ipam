@@ -44,6 +44,9 @@ The static line names the flag and environment opt-in, identifies conditional
 creation/replacement/deletion and their headers, explains that enforcement
 cannot be checked by opening and ignoring it risks concurrent corruption, and
 links to `https://github.com/appvia/ipam#supported-backends`.
+Use backend-neutral wording; present the named PutObject/DeleteObject headers
+as S3 requirements, not Azure operation names. The same warning applies to
+explicitly allowed test-only container-form Azure (FR-1/Q2).
 It contains no endpoint, bucket, prefix or credentials. Library code remains
 silent. Structured stdout still contains only its existing requested output;
 unrelated warnings or genuine operation errors are not suppressed. Verified
@@ -67,6 +70,13 @@ The unverified detail names opt-ins and the common documentation URL without
 echoing configuration. Allowed unverified doctor also receives the one stderr
 support warning; a refused doctor does not pretend the operator opted in.
 (AC-13..AC-15, AC-24.)
+
+This matrix also covers the container-form Azure path classified Unverified
+by FR-1/Q2: FAIL and skipped probes without operator consent, WARN with consent
+if no other check fails. Internal diagnostic construction retains every
+loopback/connection-string restriction even without operator consent; it cannot
+turn forbidden configuration into a diagnostic handle. Account-form Azure
+continues to use the verified row (AC-3, AC-15..AC-17, AC-23, AC-28).
 
 For example, a fictional unverified store with no operator consent and no
 discoverable pools has this report shape; real independent read-only results
