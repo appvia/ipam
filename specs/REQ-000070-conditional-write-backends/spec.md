@@ -51,10 +51,14 @@ successful diagnostic proves all conditional operations are enforced.
   | Account-form `azblob://<account>.blob.core.windows.net/...` | Verified |
   | `file://` or `mem://` | Verified |
   | `s3://` with an endpoint on any other host | Unverified |
+  | Container-form `azblob://<container>/<prefix>` (test-only emulator form) | Unverified |
 
   The classification depends on the selected endpoint host, not a provider name
   embedded elsewhere in the URL. Existing authentication and configuration
   requirements remain in effect; verified does not mean reachable or authorised.
+  The container-form Azure path remains test-only, retains all existing loopback
+  and connection-string restrictions, and emulator tests open it with explicit
+  consent. Verified account-form Azure behavior is unchanged.
 - **FR-2 - Default refusal**: Both library URL-opening entry points and ordinary
   backend-using commands must refuse unverified backends without explicit opt-in.
   Library callers must distinguish this refusal as a dedicated error category
@@ -275,5 +279,6 @@ successful diagnostic proves all conditional operations are enforced.
 
 ## Open questions *(mandatory, empty before G2)*
 
-None. The Requirement author's answer to Q1 is recorded in
-[clarifications.md](clarifications.md) and reflected in FR-6, AC-28 and NFR-7.
+None. The Requirement author's answers are recorded in
+[clarifications.md](clarifications.md): Q1 is reflected in FR-6, AC-28 and NFR-7;
+Q2 assigns the test-only container-form Azure classification in FR-1.
