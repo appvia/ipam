@@ -91,7 +91,9 @@ func TestCodecRootReservationsRejectZeroReleaseExpiryAC31(t *testing.T) {
 		t.Parallel()
 
 		data := []byte(`{"schema_version":2,"kind":"reservations","pool_id":"prod-main","incarnation":"0123456789abcdef0123456789abcdef","allocations":{},"cooldown":null,"released":{"10.0.0.0/24":"0001-01-01T00:00:00Z"}}`)
+
 		_, err := decodeReservationsDocument(data, "prod-main")
+
 		if !errors.Is(err, ErrInvalidArgument) {
 			t.Fatalf("decodeReservationsDocument() error = %v, want %v", err, ErrInvalidArgument)
 		}
