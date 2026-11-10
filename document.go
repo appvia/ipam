@@ -311,6 +311,10 @@ func decodeCooldownState(stored document.Reservations) (Cooldown, map[netip.Pref
 			return Cooldown{}, nil, fmt.Errorf("decode release record %q expiry: %w", raw, ErrInvalidArgument)
 		}
 
+		if expiry.IsZero() {
+			return Cooldown{}, nil, fmt.Errorf("decode release record %q expiry: %w", raw, ErrInvalidArgument)
+		}
+
 		released[cidr] = expiry.UTC()
 	}
 
