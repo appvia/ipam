@@ -14,6 +14,10 @@
   - One ```yaml block per Feature, Story or Enabler, with exactly these keys:
     kind, title, parent, repo, area, size, autonomy, risk, spec_path,
     what_to_build, acceptance, constraints, test_expectations, hints, depends_on
+  - executor (optional key): implementer-low | implementer-high. Set it on every
+    Story and Enabler, never on a Feature. implementer-low only for XS or S work
+    confined to one module, with no new public contract and no concurrency or
+    security logic; otherwise implementer-high.
   - kind: feature | story | enabler. Titles are unique in the file.
   - parent: a Feature's parent is the Requirement id (REQ-NNNNNN); a Story's or
     Enabler's parent is the title of a Feature block in this file.
@@ -62,6 +66,7 @@ title: Add a tenant role to the user model
 parent: Tenant admins manage their own users
 repo: appvia/example-api
 area: tenants
+executor: implementer-low
 size: S
 autonomy: Agent-led
 risk: medium
@@ -87,6 +92,7 @@ title: Only tenant admins can invite users
 parent: Tenant admins manage their own users
 repo: appvia/example-api
 area: tenants
+executor: implementer-high
 size: M
 autonomy: Agent-led
 risk: medium

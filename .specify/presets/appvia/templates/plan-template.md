@@ -8,7 +8,7 @@
 <!--
   Stage G3. The solution architect writes this file with data-model.md, contracts/,
   decisions/ADR-*.md and, for risk:high, threat-model.md. A tech lead approves it.
-  This is the Spec Kit plan for the whole Requirement, not a Story plan.
+  This is the Spec Kit plan for the whole Requirement. Stories carry no plan of their own.
 -->
 
 ## Summary

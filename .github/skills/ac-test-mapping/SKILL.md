@@ -22,10 +22,10 @@ Put this table in the PR description, one row per acceptance criterion in scope:
 
 Tick each row only with evidence, and link that evidence:
 
-- **F1 Plan compliance:** every todo done as written, nothing extra. List any file changed outside the plan's todos.
+- **F1 Story compliance:** the diff delivers the Story's What to build within its Constraints, and nothing extra. List and justify every changed file outside the Story's Hints.
 - **F2 Code quality:** lint, types and code review clean. Link the CI run.
-- **F3 Real QA:** each todo's QA happy and QA failure scenario run. Link the test names or run logs.
-- **F4 Spec fidelity:** each IS row proven, 1:1, by a row in the mapping table.
+- **F3 Test evidence:** each Test expectation in the Story (for a Bug, the reproduction) has its test, with a happy path and a failure path, and CI evidence. Link the test names or run logs.
+- **F4 Spec fidelity:** every acceptance criterion maps to a passing test in the mapping table, and the diff does not drift from the spec or the Story.
 
 If a row can't be ticked, leave it unticked and say why in one line.
 
