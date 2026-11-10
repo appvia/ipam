@@ -4,7 +4,7 @@
 
 **Version**: 0.2.0-draft | **Ratified**: pending | **Last amended**: 2026-11-05
 
-This constitution sets the non-negotiables for every Requirement, spec, plan and Story delivered through the spec-driven pipeline. Agents and humans read it before writing a brief, spec, design or Story plan. A plan that breaks a rule here must say so in its Constitution Check and get the gate approver's explicit sign-off.
+This constitution sets the non-negotiables for every Requirement, spec, plan and Story delivered through the spec-driven pipeline. Agents and humans read it before writing a brief, spec, design or Story. A design that breaks a rule here must say so in its Constitution Check and get the gate approver's explicit sign-off.
 
 ## Core principles
 
@@ -30,7 +30,7 @@ This constitution sets the non-negotiables for every Requirement, spec, plan and
 - Any language, framework or platform may be used.
 - The product's stack is chosen in the design stage and recorded, with the reason, in an ADR under the spec (`specs/<REQ>/decisions/`). It is approved at G3 with the design.
 - Every stack must have, in the repo: an exact-pinned toolchain (for example `mise.toml`, `.nvmrc` or `.terraform-version`), a lockfile where the ecosystem has one, and CI that builds, tests and lints on every pull request. The pipeline's pr-verify and F4 checks read those CI results.
-- When an org skill exists for the stack (for example `typescript-node` or `terraform-module`), plans name it. When none exists, the plan states the build, test and lint commands explicitly, and a new skill can be proposed to `appvia/agent-skills`.
+- When an org skill exists for the stack (for example `typescript-node` or `terraform-module`), the design names it. When none exists, the design states the build, test and lint commands explicitly, and a new skill can be proposed to `appvia/agent-skills`.
 - Infrastructure as code is never applied by agents.
 
 ### IV. Accessibility

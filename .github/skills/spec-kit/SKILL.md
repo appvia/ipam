@@ -29,6 +29,7 @@ Pin the tag. Never install from `main`.
 - NFRs carry a number and a unit (`p95 < 300 ms`), never "fast" or "secure".
 - Don't invent requirements. Anything you can't source from the issue or the constitution goes in Clarifications as a question.
 - `plan.md` cites the ADRs and constitution articles it relies on.
+- In `tasks.md`, every Story and Enabler block sets `executor` (never a Feature block), one of `implementer-low` or `implementer-high`. Choose `implementer-low` only for XS or S work confined to one module, with no new public contract and no concurrency or security logic; otherwise `implementer-high`.
 - A spec PR only touches `specs/**`. A human approves it (gate G2); agents never merge it.
 
 ## Data rule
