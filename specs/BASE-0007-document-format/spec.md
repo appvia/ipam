@@ -144,6 +144,9 @@ As a library caller or storage operator, I want a document with an unsupported v
 - **AC-38**: **Given** a valid version 2 pool document with `"strategy": "lowest"`, **When** a caller reads it, **Then** its strategy is `lowest`; when that pool document is next serialized, it uses version 1 without a `strategy` field, even without a policy change.
   - Evidence: UNTESTED (behaviour in `document.go` `decodePoolDocument` and `encodePoolDocument`).
 
+- **AC-39**: **Given** a stored pool or allocation has valid JSON metadata outside the caller-write limits in BASE-0005 input-validation AC-33 and AC-34, **When** the corresponding record is read, **Then** the description and label entries are retained and are not rejected for exceeding those write limits.
+  - Evidence: `metadata_test.go` `TestMetadataLimitsDoNotAffectReads` (`GetPool`, `ListPools`, `GetAllocation` and `ListAllocations`).
+
 ## Non-functional requirements *(mandatory)*
 
 - **NFR-1**: Stored-document compatibility is limited to 2 numeric schema versions, 1 and 2. Source: `internal/document/types.go` `SchemaVersionV1` and `SchemaVersionV2`; `internal/document/codec.go` `validateEnvelope`.
@@ -166,7 +169,7 @@ As a library caller or storage operator, I want a document with an unsupported v
 - Allocation strategy choices, cooldown duration limits, expiry decisions, clock behaviour and pruning release records: see BASE-0002 allocation-policy.
 - Allocation selection, containment, overlap, exhaustion, idempotency, release and metadata operations: see BASE-0003 allocations.
 - CAS, retries, unknown-outcome recovery and contention: see BASE-0004 concurrency-and-retry.
-- General pool ID, allocation ID and CIDR validation rules: see BASE-0005 input-validation. This spec covers their application at the stored-document boundary only. No description or label constraints exist yet; the maintainer decided metadata should be limited (appvia/ipam#47).
+- General pool ID, allocation ID, CIDR and caller-supplied metadata validation rules: see BASE-0005 input-validation. This spec covers ID and CIDR validation at the stored-document boundary; metadata read compatibility is specified in AC-39, while BASE-0005 AC-36 defines the corresponding library read behavior.
 - Error type structure, operation context and general error text: see BASE-0006 error-contract. This spec identifies the document conditions producing those errors.
 - Object-storage transport, ETags, listing semantics and backend durability: see BASE-0010 storage-contract and BASE-0011 through BASE-0013 for backend-specific behaviour.
 - A public document-codec API, a bulk schema migration command, or preservation of unrecognised JSON fields. Versions are selected when each document is serialized; this capability does not upgrade all documents together.

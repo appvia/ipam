@@ -188,7 +188,7 @@ without replacing the pool or its live allocations.
 - Pool creation, listing, metadata, deletion, incarnation pairing and child lifecycle beyond their policy effects: see BASE-0001 pool-lifecycle.
 - Allocation identity, containment, live overlap, general replay semantics, metadata and general release behaviour: see BASE-0003 allocations.
 - Retry budgets, backoff, client clock configuration, concurrent-writer correctness and the general unknown-outcome recovery contract: see BASE-0004 concurrency-and-retry.
-- General pool ID, CIDR and UUID validation: see BASE-0005 input-validation. No description or label validation rules exist yet; the maintainer decided metadata should be limited (appvia/ipam#47).
+- General pool ID, CIDR, UUID and caller-supplied metadata validation: see BASE-0005 input-validation. This spec does not redefine the metadata write limits.
 - General sentinel and `OpError` contracts: see BASE-0006 error-contract.
 - Stored keys, JSON field layouts, schema versions, byte compatibility, and malformed release-record decoding: see BASE-0007 document-format.
 - Pool utilisation and fragmentation reporting: see BASE-0008 pool-stats.
