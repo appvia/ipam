@@ -120,6 +120,18 @@ As a library caller using `ListAllocations(ctx, poolID)` to read a pool's reserv
 - **AC-32**: **Given** a valid new pool specification with a supplied labels map, **When** a caller successfully creates the pool through `CreatePool` and then changes either the supplied map or the returned pool's labels map, **Then** the other map retains its entries unchanged.
   - Evidence: UNTESTED (behaviour in `canonical.go` `cloneLabels` and `canonicalPool`; `pool.go` `CreatePool`)
 
+- **AC-33**: **Given** caller-supplied pool or allocation metadata, **When** a description is validated, **Then** it is accepted only when it is valid UTF-8, at most 1024 bytes, and contains no Unicode control characters except tab and newline; otherwise the operation rejects it with an error matching `ErrInvalidArgument`.
+  - Evidence: `validate_test.go` `TestValidateMetadata` (byte boundaries, UTF-8, and control characters); `metadata_test.go` `TestMetadataLimitsRejectWrites`
+
+- **AC-34**: **Given** caller-supplied labels, **When** the labels are validated, **Then** at most 64 entries are accepted; each key is non-empty, at most 63 bytes, and matches `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`; each value contains at most 63 Unicode runes, including empty values; otherwise the operation rejects them with an error matching `ErrInvalidArgument`.
+  - Evidence: `validate_test.go` `TestValidateMetadata` (count, key grammar and length, and rune-length boundaries); `metadata_test.go` `TestMetadataLimitsRejectWrites`
+
+- **AC-35**: **Given** a caller supplies metadata to `CreatePool`, `UpdatePoolMetadata`, `Allocate` or `UpdateAllocationMetadata`, **When** the metadata violates AC-33 or AC-34, **Then** the operation fails before changing stored state; the same validation applies when `Allocate` replays an existing allocation ID.
+  - Evidence: `metadata_test.go` `TestMetadataLimitsRejectWrites` (all four write APIs and allocation replay; rejected writes preserve state)
+
+- **AC-36**: **Given** a stored pool or allocation document contains metadata outside AC-33 or AC-34, **When** a caller reads that record, **Then** it remains readable and the stored description and labels are returned unchanged; caller-write limits do not retroactively invalidate stored metadata.
+  - Evidence: `metadata_test.go` `TestMetadataLimitsDoNotAffectReads` (`GetPool`, `ListPools`, `GetAllocation`, `ListAllocations`, policy update, and release)
+
 ## Non-functional requirements *(mandatory)*
 
 - **NFR-1**: Pool identifiers contain at least 1 and at most 63 ASCII characters. Source: `canonical.go` `poolIDPattern`.
@@ -131,6 +143,7 @@ As a library caller using `ListAllocations(ctx, poolID)` to read a pool's reserv
 - **Pool input**: A pool identifier, a nonempty collection of CIDRs, optional description and labels, and an optional parent reference. The address family is derived from the CIDRs and returned on the pool (`4` for IPv4 or `6` for IPv6).
 - **CIDR**: An address and prefix length. Canonical pool CIDRs have host bits cleared and use IPv4 notation for IPv4-mapped addresses.
 - **Allocation identity**: A canonical lowercase UUID, normally generated as UUIDv7 by `NewAllocationID()`, or a carve-out identifier validated as in AC-9 (see BASE-0007 document-format Key entities).
+- **Metadata**: Caller-supplied pool or allocation descriptions and labels subject to AC-33 and AC-34 on writes; existing stored metadata remains readable under AC-36.
 - **Allocation record**: An allocation identifier, its pool identifier, its allocated canonical CIDR, and its original next-prefix or explicit request.
 - **Reservations document**: See BASE-0007 document-format Key entities.
 - **Incarnation**: A 32-character lowercase hexadecimal identity associated with a pool lifetime. Its generation and lifecycle meaning belong to BASE-0001 pool-lifecycle.
@@ -144,7 +157,7 @@ As a library caller using `ListAllocations(ctx, poolID)` to read a pool's reserv
 - Public error types, wrapping, reason strings, and message construction belong to BASE-0006 error-contract. Error identities are named here only to describe each validation outcome.
 - Storage keys, JSON schemas, decoding, and schema-version compatibility belong to BASE-0007 document-format.
 - Backend URL parsing belongs to BASE-0009 backend-url; CLI parsing and diagnostics belong to BASE-0014 cli.
-- These rules describe checks used by library workflows, not a separately exported general-purpose validation API. No new validation rules or metadata restrictions are introduced by this baseline.
+- These rules describe checks used by library workflows, not a separately exported general-purpose validation API. Metadata write limits and their non-retroactive effect on reads are specified in AC-33 through AC-36.
 
 ## Open questions *(mandatory, empty before G2)*
 

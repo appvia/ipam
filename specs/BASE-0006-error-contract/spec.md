@@ -142,6 +142,12 @@ For pool lifecycle, allocation policy and allocation error conditions, this spec
 - **AC-34**: **Given** a pool is replaced by another incarnation during `UpdatePoolPolicy` (see BASE-0002 allocation-policy), **When** the call detects the replacement, **Then** it returns an error without exhausting its retry budget, with `OpError.Reason` equal to `pool_incomplete` and `errors.Is` matching `ErrNotFound`.
   - Evidence: `client_review_regression_test.go` `TestUpdatePoolPolicyDoesNotModifyReplacement` through `assertPoolIncomplete` (reason and sentinel at the between-phases, strategy-retry, strategy-unknown-outcome and cooldown-retry boundaries); returning without exhausting the retry budget is UNTESTED (behaviour in `pool.go` `readUsableDocuments`, `updatePoolStrategy` and `updatePoolCooldown`, reached by `UpdatePoolPolicy`).
 
+- **AC-35**: **Given** a write rejected because caller-supplied pool or allocation metadata violates BASE-0005 input-validation AC-33 or AC-34, **When** the caller inspects the error, **Then** it matches `ErrInvalidArgument` and its `OpError.Reason` is `invalid_metadata`.
+  - Evidence: `metadata_test.go` `TestMetadataLimitsRejectWrites` (checks `ErrInvalidArgument` and `invalid_metadata` for pool create/update and allocation create/update/replay).
+
+- **AC-36**: **Given** caller-supplied metadata rejected under AC-35, **When** the error is rendered, **Then** it does not include the rejected description, label key or label value.
+  - Evidence: `metadata_test.go` `TestMetadataLimitsRejectWrites` (asserts rejected values are absent from error text); `validate_test.go` `TestValidateMetadata` (fixed validation messages).
+
 ## Non-functional requirements *(mandatory)*
 
 - None enforced in code.
@@ -159,7 +165,7 @@ For pool lifecycle, allocation policy and allocation error conditions, this spec
   | `ErrInvalidArgument` | `ipam: invalid argument` |
   | `ErrUnsupportedSchema` | `ipam: unsupported schema` |
 
-- **`OpError`**: An exported error carrying string fields `Op` (operation), `Pool` (pool identifier), `ID` (allocation identifier) and `Reason` (optional reason), plus `Err` (underlying error). Its `Error` method provides diagnostic text and `Unwrap` exposes `Err`. `Reason` is a string rather than an exported enumeration; AC-20 through AC-34 record the emitted vocabulary and its error categories at the baseline commit without promising future vocabulary stability.
+- **`OpError`**: An exported error carrying string fields `Op` (operation), `Pool` (pool identifier), `ID` (allocation identifier) and `Reason` (optional reason), plus `Err` (underlying error). Its `Error` method provides diagnostic text and `Unwrap` exposes `Err`. `Reason` is a string rather than an exported enumeration; AC-20 through AC-36 record the emitted vocabulary and its error categories without promising future vocabulary stability.
 - **`UnsupportedPoolsError`**: An exported error carrying `PoolIDs`, a list of pool identifiers omitted from an otherwise valid partial listing because of unsupported schema versions. Its error category is `ErrUnsupportedSchema`.
 
 ## Out of scope *(mandatory)*
