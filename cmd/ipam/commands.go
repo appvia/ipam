@@ -4,14 +4,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/appvia/ipam"
 )
@@ -34,14 +37,30 @@ parent can then hand out again (overlapping networks). Only release a leaked
 carve-out once you are sure no create for that child is in flight.`
 
 type cli struct {
-	stdout      io.Writer
-	getenv      func(string) string
-	open        openFunc
-	openStorage openStorageFunc
-	backend     string
-	output      string
-	started     bool
-	closers     []io.Closer
+	stdout           io.Writer
+	getenv           func(string) string
+	open             openFunc
+	openStorage      openStorageFunc
+	backend          string
+	output           string
+	started          bool
+	closers          []io.Closer
+	allowUnverified  bool
+	warnedUnverified bool
+}
+
+type backendSelection struct {
+	url             string
+	classification  ipam.BackendClassification
+	allowUnverified bool
+}
+
+func (b backendSelection) openingContext(ctx context.Context) context.Context {
+	if b.allowUnverified {
+		return ipam.WithAllowUnverifiedBackend(ctx)
+	}
+
+	return ctx
 }
 
 func (c *cli) rootCommand() *cobra.Command {
@@ -58,6 +77,11 @@ The backend is chosen with --backend or IPAM_BACKEND:
   file:///absolute/path
 Credentials come from the environment, never from the URL.
 
+Allow an unverified backend with --allow-unverified-backend or
+IPAM_ALLOW_UNVERIFIED_BACKEND=true after evaluating conditional-write safety.
+An explicitly supplied true or false flag overrides the environment setting.
+Support policy: https://github.com/appvia/ipam#supported-backends
+
 Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 pool exhausted,
 6 'ipam doctor' found a failed check.`,
 		SilenceErrors: true,
@@ -67,8 +91,17 @@ Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 pool exhausted,
 	}
 
 	root.PersistentFlags().StringVar(&c.backend, "backend", "", "backend URL (env IPAM_BACKEND)")
+	root.PersistentFlags().BoolVar(&c.allowUnverified, "allow-unverified-backend", false,
+		"accept unverified backend conditional-write risk (env IPAM_ALLOW_UNVERIFIED_BACKEND)")
 	root.PersistentFlags().StringVarP(&c.output, "output", "o", "table", "output format: json or table")
-	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{msg: err.Error()} })
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		var invalid *pflag.InvalidValueError
+		if errors.As(err, &invalid) && invalid.GetFlag().Name == "allow-unverified-backend" {
+			return usagef("--allow-unverified-backend must be a boolean")
+		}
+
+		return &usageError{msg: err.Error()}
+	})
 	root.AddCommand(c.poolCommand(), c.allocCommand(), c.doctorCommand(), c.versionCommand())
 
 	return root
@@ -109,13 +142,43 @@ func (c *cli) backendURL() (string, error) {
 	return backend, nil
 }
 
-func (c *cli) client(cmd *cobra.Command) (*ipam.Client, error) {
+func (c *cli) prepareBackend(cmd *cobra.Command) (backendSelection, error) {
 	backend, err := c.backendURL()
+	if err != nil {
+		return backendSelection{}, err
+	}
+
+	classification, err := ipam.ClassifyBackend(backend)
+	if err != nil {
+		return backendSelection{}, err
+	}
+
+	allow := c.allowUnverified
+	if !cmd.Flags().Changed("allow-unverified-backend") {
+		if value := c.getenv("IPAM_ALLOW_UNVERIFIED_BACKEND"); value != "" {
+			allow, err = strconv.ParseBool(value)
+			if err != nil {
+				return backendSelection{}, usagef("IPAM_ALLOW_UNVERIFIED_BACKEND must be a boolean")
+			}
+		}
+	}
+
+	if classification == ipam.BackendUnverified && allow {
+		if err := c.warnUnverified(cmd.ErrOrStderr()); err != nil {
+			return backendSelection{}, err
+		}
+	}
+
+	return backendSelection{url: backend, classification: classification, allowUnverified: allow}, nil
+}
+
+func (c *cli) client(cmd *cobra.Command) (*ipam.Client, error) {
+	backend, err := c.prepareBackend(cmd)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := c.open(cmd.Context(), backend)
+	client, err := c.open(backend.openingContext(cmd.Context()), backend.url)
 	if err != nil {
 		return nil, err
 	}
