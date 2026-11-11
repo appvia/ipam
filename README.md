@@ -258,7 +258,7 @@ Commands:
 | `ipam alloc list <pool>` | List allocations, including child-pool carve-outs. |
 | `ipam alloc update <pool> <id> [--description TEXT] [--label k=v...]` | Change metadata. |
 | `ipam alloc release <pool> <id>` | Release an allocation. Releasing an absent ID succeeds. |
-| `ipam doctor [--expect-write POOL...] [--expect-no-write POOL...]` | Check a backend without changing data (see below). |
+| `ipam doctor [--expect-write POOL...] [--expect-no-write POOL...]` | Diagnose backend support, access and data protection (see probe risks below). |
 | `ipam version` | Print the CLI version. |
 | `ipam completion bash\|zsh\|fish\|powershell` | Print a shell completion script. |
 
@@ -358,22 +358,43 @@ example `delete pool prod (pool_not_empty): ipam: conflict`.
 
 ### ipam doctor
 
-`ipam doctor` checks that a backend is usable and safe, and never creates,
-deletes or modifies data:
+`ipam doctor` reports support policy and available backend diagnostics. It never
+creates or deletes data, but its write probe can change data on a backend that
+ignores conditional writes. Classification is not evidence of connectivity,
+permission or conditional-write enforcement.
 
 | Check | PASS | WARN | FAIL |
 | --- | --- | --- | --- |
+| `backend-classification` (first row) | verified support policy | unverified with explicit operator consent | unverified without consent |
 | `backend` | `pools/` is listable and a pool document readable | | listing or reading fails |
 | `data-protection` | versioning or soft delete is on | state unknown (no permission to read it, Azurite), or a `file://` backend | both are known to be off |
 | `hierarchical-namespace` | flat namespace | unknown | Azure hierarchical namespace (Data Lake Gen2) is on |
-| `write-probe` (per pool) | conditional writes honoured, or write denied | reservations document missing or unreadable (probe skipped) | the backend ignored a conditional write, or an `--expect-write`/`--expect-no-write` assertion failed |
+| `write-probe` (per pool) | conditional writes honoured, or write denied | probe skipped: no consent for an unverified backend, or reservations document missing or unreadable | the backend ignored a conditional write, or an `--expect-write`/`--expect-no-write` assertion failed |
 | `fragmentation` (per pool) | statistics read, index below the WARN threshold | fragmentation index >= 0.5 with capacity >= 4, or statistics unavailable (not found, unsupported schema, read error) | never |
 
-The write probe sends a pool's own reservations bytes back with a version that
+Both table and JSON output start with the textual `backend-classification` row.
+Any FAIL makes the overall result `fail` and exits 6; warnings alone yield
+`warn` and exit 0. Unverified backends remain unverified even with consent.
+
+Without operator consent for an unverified backend, doctor continues available
+read-only backend, protection and fragmentation checks but never attempts a write
+probe, even with either permission expectation flag. Each pool in the sorted union
+of discovered and expectation-named pools gets a WARN skip row explaining the
+missing opt-in; when no pool is available, one global skip row is reported.
+The classification remains FAIL. An unverified backend's construction failure
+produces a redacted backend FAIL rather than a usable diagnostic handle.
+
+To enable existing probes on an unverified backend, explicitly accept the risk
+with `--allow-unverified-backend` or `IPAM_ALLOW_UNVERIFIED_BACKEND=true`.
+An explicit false flag overrides the environment. Diagnostic construction alone
+does not grant consent for probes or ordinary commands. See
+[Supported backends](https://github.com/appvia/ipam#supported-backends).
+
+The enabled write probe sends a pool's own reservations bytes back with a version that
 can't match. A precondition failure proves you can write and that conditions
 are enforced; access denied proves you can't write. If the write succeeds, the
-backend ignores conditions, which is a FAIL. The bytes were identical, so no
-content changed.
+backend ignores conditions, which is a FAIL. Although it sends the same bytes it
+read, it can overwrite concurrent changes on a non-enforcing backend.
 
 `--expect-write POOL` and `--expect-no-write POOL` (both repeatable) turn a
 pool's probe into an assertion. Run doctor as each identity to prove its
@@ -401,8 +422,9 @@ The `fragmentation` check only reads. It's described in
 strict cooldown can refuse a request even when allocatable > 0. The active
 cooling range count is reported separately.
 
-**Limit:** doctor can't detect a backend that ignores conditional DELETE,
-because probing that would delete data. It only covers conditional writes.
+**Limit:** doctor cannot prove conditional deletion or detect a backend that
+ignores conditional DELETE, because probing that would delete data. Its existing
+probe only tests conditional replacement, not the full storage contract.
 
 ## Upgrading
 

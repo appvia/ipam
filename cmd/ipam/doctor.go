@@ -19,9 +19,12 @@ import (
 	"github.com/appvia/ipam/storage"
 )
 
-const doctorHelp = `Check a backend without changing any data.
+const doctorHelp = `Check backend support policy, access and data protection.
 
 Checks:
+  backend-classification  verified: PASS; unverified with explicit consent: WARN;
+                          unverified without consent: FAIL. This is support
+                          policy, not proof of connectivity or permission.
   backend                 pools/ can be listed and a pool document read.
   data-protection         versioning or soft delete is enabled (unknown: WARN).
   hierarchical-namespace  Azure accounts with a hierarchical namespace FAIL.
@@ -30,8 +33,8 @@ Checks:
                           precondition failure means writes are allowed and
                           conditional writes are honoured; access denied means
                           no write access; success means the backend IGNORES
-                          conditional writes (FAIL; the bytes were identical,
-                          so the content is unchanged). A pool whose document
+                          conditional writes (FAIL; concurrent changes may
+                          have been overwritten). A pool whose document
                           cannot be read is a WARN and is not written to.
   fragmentation           per pool: utilisation, free space, largest free block,
                           free blocks by prefix length and, for the pool's most
@@ -47,8 +50,15 @@ Checks:
                           makes the overall result WARN and the exit code stays 0.
 
 --expect-write and --expect-no-write turn the write probe of a pool into an
-assertion. Doctor never creates, deletes or modifies data. It cannot detect a
-backend that ignores conditional DELETE, because probing that would delete data.
+assertion. Without consent on an unverified backend, doctor runs only available
+read-only checks and explicitly skips write probes, including expectations.
+Allow probes with --allow-unverified-backend or IPAM_ALLOW_UNVERIFIED_BACKEND=true
+after evaluating conditional-write safety. See
+https://github.com/appvia/ipam#supported-backends
+
+Doctor never creates or deletes data, but its write probe can change data on a
+backend that ignores conditional writes, including overwriting concurrent changes.
+It cannot prove conditional deletion, because probing that would delete data.
 
 Exit codes: 0 no failed check, 6 at least one failed check (1, 2 as usual).`
 
@@ -119,7 +129,7 @@ func (c *cli) doctorCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "doctor [--expect-write POOL...] [--expect-no-write POOL...]",
-		Short: "Check backend access, data protection and write permission without changing data",
+		Short: "Check backend support policy, access, data protection and write permission",
 		Long:  doctorHelp,
 		Args:  cobra.NoArgs,
 		RunE: c.leaf(func(cmd *cobra.Command, _ []string) error {
@@ -133,16 +143,31 @@ func (c *cli) doctorCommand() *cobra.Command {
 				return err
 			}
 
-			store, err := c.openStorage(backend.openingContext(cmd.Context()), backend.url)
+			probeEnabled := backend.classification == ipam.BackendVerified || backend.allowUnverified
+			report := doctorReport{Checks: []checkResult{checkBackendClassification(backend)}}
+
+			store, err := c.openDoctorStorage(cmd.Context(), backend)
 			if err != nil {
-				return err
+				if backend.classification == ipam.BackendVerified {
+					return err
+				}
+
+				report.add(checkResult{Check: "backend", Status: statusFail, Detail: "cannot construct unverified backend for diagnosis"})
+
+				if !probeEnabled {
+					report.add(skippedWriteProbes(doctorPools(nil, expectations))...)
+				}
+			} else {
+				if closer, ok := store.(io.Closer); ok {
+					c.closers = append(c.closers, closer)
+				}
+
+				diagnostics := diagnose(cmd.Context(), store, strings.HasPrefix(backend.url, "file:"), expectations, probeEnabled)
+				report.add(diagnostics.Checks...)
 			}
 
-			if closer, ok := store.(io.Closer); ok {
-				c.closers = append(c.closers, closer)
-			}
+			report = report.finish()
 
-			report := diagnose(cmd.Context(), store, strings.HasPrefix(backend.url, "file:"), expectations)
 			if err := c.printDoctor(report); err != nil {
 				return err
 			}
@@ -159,6 +184,36 @@ func (c *cli) doctorCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&expectNoWrite, "expect-no-write", nil, "pool that must not be writable (repeatable)")
 
 	return cmd
+}
+
+// Diagnostic construction consent is scoped to opening, never to the checks or
+// the operator's consent used for classification, warnings and probes.
+func (c *cli) openDoctorStorage(ctx context.Context, backend backendSelection) (storage.Storage, error) {
+	if backend.classification == ipam.BackendUnverified {
+		return c.openStorage(ipam.WithAllowUnverifiedBackend(ctx), backend.url)
+	}
+
+	return c.openStorage(backend.openingContext(ctx), backend.url)
+}
+
+func checkBackendClassification(backend backendSelection) checkResult {
+	result := checkResult{Check: "backend-classification", Status: statusPass,
+		Detail: "verified support policy; not evidence of connectivity, permission or conditional-write enforcement"}
+	if backend.classification == ipam.BackendVerified {
+		return result
+	}
+
+	if backend.allowUnverified {
+		result.Status = statusWarn
+		result.Detail = "unverified; explicit consent permits use but does not prove conditional-write enforcement. " +
+			"Consent: --allow-unverified-backend or IPAM_ALLOW_UNVERIFIED_BACKEND=true. See https://github.com/appvia/ipam#supported-backends"
+	} else {
+		result.Status = statusFail
+		result.Detail = "unverified; no explicit consent; ordinary use refused. Use --allow-unverified-backend or " +
+			"IPAM_ALLOW_UNVERIFIED_BACKEND=true after evaluating conditional-write safety. See https://github.com/appvia/ipam#supported-backends"
+	}
+
+	return result
 }
 
 // writeExpectations maps each pool to true (write expected) or false (no
@@ -188,29 +243,31 @@ func writeExpectations(write, noWrite []string) (map[string]bool, error) {
 
 // diagnose runs every check. It only reads, apart from the write probe, which
 // sends a pool's own reservations bytes under a version that cannot match.
-func diagnose(ctx context.Context, store storage.Storage, fileBackend bool, expectations map[string]bool) doctorReport {
+func diagnose(ctx context.Context, store storage.Storage, fileBackend bool, expectations map[string]bool, probeEnabled bool) doctorReport {
 	var report doctorReport
 
 	pools, backend := checkBackend(ctx, store)
 	report.add(backend)
 
+	pools = doctorPools(pools, expectations)
+
 	if backend.Status == statusFail {
+		if !probeEnabled {
+			report.add(skippedWriteProbes(pools)...)
+		}
+
 		return report.finish()
 	}
 
 	report.add(checkProtection(ctx, store, fileBackend)...)
 
-	for id := range expectations {
-		if !slices.Contains(pools, id) {
-			pools = append(pools, id)
+	if probeEnabled {
+		for _, id := range pools {
+			expectation, expected := expectations[id]
+			report.add(probeWrite(ctx, store, id, expectation, expected))
 		}
-	}
-
-	slices.Sort(pools)
-
-	for _, id := range pools {
-		expectation, expected := expectations[id]
-		report.add(probeWrite(ctx, store, id, expectation, expected))
+	} else {
+		report.add(skippedWriteProbes(pools)...)
 	}
 
 	client := ipam.New(store)
@@ -220,6 +277,32 @@ func diagnose(ctx context.Context, store storage.Storage, fileBackend bool, expe
 	}
 
 	return report.finish()
+}
+
+func doctorPools(discovered []string, expectations map[string]bool) []string {
+	for id := range expectations {
+		if !slices.Contains(discovered, id) {
+			discovered = append(discovered, id)
+		}
+	}
+
+	slices.Sort(discovered)
+
+	return slices.Compact(discovered)
+}
+
+func skippedWriteProbes(pools []string) []checkResult {
+	if len(pools) == 0 {
+		pools = []string{""}
+	}
+
+	results := make([]checkResult, 0, len(pools))
+	for _, pool := range pools {
+		results = append(results, checkResult{Check: "write-probe", Pool: pool, Status: statusWarn,
+			Detail: "write probes skipped: backend is unverified and no opt-in was supplied"})
+	}
+
+	return results
 }
 
 func checkBackend(ctx context.Context, store storage.Storage) ([]string, checkResult) {
@@ -243,7 +326,7 @@ func checkBackend(ctx context.Context, store storage.Storage) ([]string, checkRe
 	if len(pools) > 0 {
 		if _, _, err := store.Get(ctx, "pools/"+pools[0]+".json"); err != nil {
 			result.Detail = fmt.Sprintf("cannot read pools/%s.json: %v", pools[0], err)
-			return nil, result
+			return pools, result
 		}
 	}
 
