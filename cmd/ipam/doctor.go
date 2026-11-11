@@ -128,12 +128,12 @@ func (c *cli) doctorCommand() *cobra.Command {
 				return err
 			}
 
-			backend, err := c.backendURL()
+			backend, err := c.prepareBackend(cmd)
 			if err != nil {
 				return err
 			}
 
-			store, err := c.openStorage(cmd.Context(), backend)
+			store, err := c.openStorage(backend.openingContext(cmd.Context()), backend.url)
 			if err != nil {
 				return err
 			}
@@ -142,7 +142,7 @@ func (c *cli) doctorCommand() *cobra.Command {
 				c.closers = append(c.closers, closer)
 			}
 
-			report := diagnose(cmd.Context(), store, strings.HasPrefix(backend, "file:"), expectations)
+			report := diagnose(cmd.Context(), store, strings.HasPrefix(backend.url, "file:"), expectations)
 			if err := c.printDoctor(report); err != nil {
 				return err
 			}

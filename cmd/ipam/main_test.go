@@ -8,10 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/spf13/cobra"
 
 	"github.com/appvia/ipam"
 	"github.com/appvia/ipam/storage"
@@ -67,6 +70,451 @@ func newMemHarness(t *testing.T) *harness {
 	}
 
 	return &harness{t: t, backend: "mem://", env: map[string]string{}, open: open}
+}
+
+const testUnverifiedBackend = "s3://fictional-bucket/private-prefix?endpoint=https://store.example.test&region=us-east-1"
+
+// policyStore records operation contexts independently of the opening context.
+type policyStore struct {
+	storage.Storage
+	t          *testing.T
+	parent     context.Context
+	operations int
+}
+
+func (s *policyStore) List(ctx context.Context, prefix string) ([]string, error) {
+	if ctx != s.parent {
+		s.t.Fatal("opening consent leaked into the operation context")
+	}
+
+	s.operations++
+
+	return s.Storage.List(ctx, prefix)
+}
+
+type policyHarness struct {
+	t      *testing.T
+	parent context.Context
+	store  *policyStore
+	opened []context.Context
+	urls   []string
+	stderr io.Writer
+}
+
+func newPolicyHarness(t *testing.T) *policyHarness {
+	t.Helper()
+
+	parent, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+
+	return &policyHarness{
+		t: t, parent: parent,
+		store: &policyStore{Storage: memory.New(), t: t, parent: parent},
+	}
+}
+
+func (h *policyHarness) recordOpen(ctx context.Context, raw string) {
+	h.opened = append(h.opened, ctx)
+	h.urls = append(h.urls, raw)
+}
+
+func (h *policyHarness) run(env map[string]string, args ...string) result {
+	h.t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	errWriter := h.stderr
+	if errWriter == nil {
+		errWriter = &stderr
+	}
+
+	code := runCLI(h.parent, args, &stdout, errWriter, func(key string) string { return env[key] },
+		func(ctx context.Context, raw string) (*ipam.Client, error) {
+			h.recordOpen(ctx, raw)
+
+			return ipam.New(h.store), nil
+		}, func(ctx context.Context, raw string) (storage.Storage, error) {
+			h.recordOpen(ctx, raw)
+
+			return h.store, nil
+		})
+
+	return result{stdout: stdout.String(), stderr: stderr.String(), code: code}
+}
+
+func assertOpeningConsent(t *testing.T, h *policyHarness, want bool) {
+	t.Helper()
+
+	if len(h.opened) == 0 {
+		t.Fatal("opener was not called")
+	}
+
+	expected := h.parent
+	if want {
+		expected = ipam.WithAllowUnverifiedBackend(h.parent)
+	}
+
+	for _, ctx := range h.opened {
+		if !reflect.DeepEqual(ctx, expected) {
+			t.Fatalf("opening context does not carry effective consent %v", want)
+		}
+	}
+}
+
+func assertSupportWarning(t *testing.T, res result, count int) {
+	t.Helper()
+
+	if got := strings.Count(res.stderr, "ipam: warning: unverified backend;"); got != count {
+		t.Fatalf("support-risk warnings = %d, want %d; stderr %q", got, count, res.stderr)
+	}
+
+	if count > 0 && (strings.Count(res.stderr, "\n") != count || !strings.HasSuffix(res.stderr, "\n")) {
+		t.Fatalf("warning is not exactly one newline-terminated line: %q", res.stderr)
+	}
+}
+
+func TestCLIUnverifiedFlagConsent(t *testing.T) {
+	for _, command := range []string{"pool", "doctor"} {
+		for _, selector := range []string{"flag", "environment"} {
+			for _, value := range []string{"", "false", "private-malformed-consent"} {
+				t.Run("AC-9/"+command+"/"+selector+"/"+value, func(t *testing.T) {
+					h := newPolicyHarness(t)
+					env := map[string]string{"IPAM_ALLOW_UNVERIFIED_BACKEND": value, "IPAM_BACKEND": testUnverifiedBackend}
+
+					args := []string{command}
+					if command == "pool" {
+						args = append(args, "list")
+					}
+
+					args = append(args, "--allow-unverified-backend", "-o", "json")
+
+					if selector == "flag" {
+						env["IPAM_BACKEND"] = "invalid-environment-backend"
+
+						args = append(args, "--backend", testUnverifiedBackend)
+					}
+
+					res := h.run(env, args...)
+					if res.code != exitOK || h.store.operations == 0 || !slices.Equal(h.urls, []string{testUnverifiedBackend}) {
+						t.Fatalf("command did not operate on selected backend: %+v, URLs %v", res, h.urls)
+					}
+
+					assertOpeningConsent(t, h, true)
+					assertSupportWarning(t, res, 1)
+				})
+			}
+		}
+	}
+}
+
+func TestCLIUnverifiedEnvironmentConsent(t *testing.T) {
+	for _, selector := range []string{"flag", "environment"} {
+		for _, value := range []string{"1", "t", "T", "TRUE", "true", "True"} {
+			t.Run("AC-10/"+selector+"/"+value, func(t *testing.T) {
+				h := newPolicyHarness(t)
+				env := map[string]string{"IPAM_BACKEND": testUnverifiedBackend, "IPAM_ALLOW_UNVERIFIED_BACKEND": value}
+
+				args := []string{"pool", "list", "-o", "json"}
+				if selector == "flag" {
+					args = append(args, "--backend", testUnverifiedBackend)
+				}
+
+				res := h.run(env, args...)
+				if res.code != exitOK || h.store.operations == 0 {
+					t.Fatalf("command did not operate: %+v", res)
+				}
+
+				decodeArray(t, res.stdout)
+				assertOpeningConsent(t, h, true)
+				assertSupportWarning(t, res, 1)
+			})
+		}
+	}
+}
+
+func TestCLIExplicitFalseOverridesEnvironment(t *testing.T) {
+	for _, command := range []string{"pool", "doctor"} {
+		for _, value := range []string{"true", "private-malformed-consent"} {
+			t.Run(command+"/"+value, func(t *testing.T) {
+				h := newPolicyHarness(t)
+
+				args := []string{command}
+				if command == "pool" {
+					args = append(args, "list")
+				}
+
+				res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend, "IPAM_ALLOW_UNVERIFIED_BACKEND": value},
+					append(args, "--allow-unverified-backend=false")...)
+				if res.code != exitOK {
+					t.Fatalf("pre-enforcement command: %+v", res)
+				}
+
+				assertOpeningConsent(t, h, false)
+				assertSupportWarning(t, res, 0)
+			})
+		}
+	}
+}
+
+func TestCLIConsentDefaultsClosed(t *testing.T) {
+	for _, command := range []string{"pool", "doctor"} {
+		for _, value := range []string{"absent", "", "0", "f", "F", "FALSE", "false", "False", "private-malformed-consent"} {
+			t.Run(command+"/"+value, func(t *testing.T) {
+				h := newPolicyHarness(t)
+
+				args := []string{command}
+				if command == "pool" {
+					args = append(args, "list")
+				}
+
+				env := map[string]string{"IPAM_BACKEND": testUnverifiedBackend}
+				if value != "absent" {
+					env["IPAM_ALLOW_UNVERIFIED_BACKEND"] = value
+				}
+
+				res := h.run(env, args...)
+				if value == "private-malformed-consent" {
+					if res.code != exitUsage || len(h.opened) != 0 || h.store.operations != 0 || strings.Contains(res.stderr, value) {
+						t.Fatalf("malformed consent: %+v", res)
+					}
+				} else {
+					if res.code != exitOK {
+						t.Fatalf("pre-enforcement command: %+v", res)
+					}
+
+					assertOpeningConsent(t, h, false)
+				}
+
+				assertSupportWarning(t, res, 0)
+			})
+		}
+	}
+}
+
+func TestCLIUnverifiedWarningOncePerInvocation(t *testing.T) {
+	t.Run("AC-12/independent invocations and JSON", func(t *testing.T) {
+		h := newPolicyHarness(t)
+		for range 2 {
+			res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend}, "pool", "list", "--allow-unverified-backend", "-o", "json")
+			if res.code != exitOK {
+				t.Fatalf("command: %+v", res)
+			}
+
+			decodeArray(t, res.stdout)
+			assertSupportWarning(t, res, 1)
+		}
+	})
+	t.Run("AC-12/repeated openings", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+
+		c := &cli{stdout: &stdout, getenv: func(string) string { return "" }, open: func(context.Context, string) (*ipam.Client, error) {
+			if strings.Count(stderr.String(), "ipam: warning: unverified backend;") != 1 {
+				t.Fatal("opener ran before the support-risk warning was written")
+			}
+
+			return ipam.New(memory.New()), nil
+		}}
+		defer c.closeAll()
+
+		root := c.rootCommand()
+		root.SetErr(&stderr)
+		root.AddCommand(&cobra.Command{Use: "repeat", RunE: c.leaf(func(cmd *cobra.Command, _ []string) error {
+			for range 3 {
+				if _, err := c.client(cmd); err != nil {
+					return err
+				}
+			}
+
+			return writeJSON(c.stdout, map[string]bool{"ok": true})
+		})})
+		root.SetArgs([]string{"repeat", "--backend", testUnverifiedBackend, "--allow-unverified-backend"})
+
+		if err := root.ExecuteContext(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		decodeObject(t, stdout.String())
+		assertSupportWarning(t, result{stderr: stderr.String()}, 1)
+	})
+	t.Run("AC-12/verified silence and AC-18/shared classifier", func(t *testing.T) {
+		for _, backend := range []string{"mem://", "file:///fictional", "s3://fictional-bucket", "s3://fictional-bucket?endpoint=https://s3.amazonaws.com", "azblob://fictional.blob.core.windows.net/container", "azblob://container/prefix", "s3://fictional-bucket?endpoint=https://amazonaws.com.example.test"} {
+			h := newPolicyHarness(t)
+
+			classification, err := ipam.ClassifyBackend(backend)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, consent := range []string{"false", "true", "true", "false"} {
+				res := h.run(map[string]string{"IPAM_BACKEND": backend, "IPAM_ALLOW_UNVERIFIED_BACKEND": consent}, "pool", "list")
+				if res.code != exitOK {
+					t.Fatalf("command: %+v", res)
+				}
+
+				want := 0
+				if classification == ipam.BackendUnverified && consent == "true" {
+					want = 1
+				}
+
+				assertSupportWarning(t, res, want)
+
+				after, err := ipam.ClassifyBackend(backend)
+				if err != nil || after != classification {
+					t.Fatalf("consent or operation changed classification: %v, %v", after, err)
+				}
+			}
+		}
+	})
+	t.Run("AC-12/warning writer failure", func(t *testing.T) {
+		for _, args := range [][]string{{"pool", "list", "--allow-unverified-backend"}, {"doctor", "--allow-unverified-backend"}} {
+			h := newPolicyHarness(t)
+			h.stderr = failingPolicyWriter{}
+
+			res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend}, args...)
+			if res.code != exitError || h.store.operations != 0 || len(h.opened) != 0 || res.stdout != "" {
+				t.Fatalf("writer failure allowed opening or operations: %+v", res)
+			}
+		}
+	})
+	t.Run("AC-12/failed writes do not record success", func(t *testing.T) {
+		var c cli
+
+		if err := c.warnUnverified(failingPolicyWriter{}); !errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("warning error = %v, want closed pipe", err)
+		}
+
+		if c.warnedUnverified {
+			t.Fatal("failed warning write marked as successful")
+		}
+
+		var stderr bytes.Buffer
+
+		if err := c.warnUnverified(&stderr); err != nil {
+			t.Fatal(err)
+		}
+
+		assertSupportWarning(t, result{stderr: stderr.String()}, 1)
+	})
+	t.Run("AC-12/short warning write", func(t *testing.T) {
+		var c cli
+
+		if err := c.warnUnverified(shortPolicyWriter{}); !errors.Is(err, io.ErrShortWrite) || c.warnedUnverified {
+			t.Fatalf("short warning write recorded success or lost its error: %v", err)
+		}
+	})
+	t.Run("AC-12/unrelated warnings remain visible", func(t *testing.T) {
+		h := newPolicyHarness(t)
+		if _, err := h.store.CreateIfAbsent(h.parent, "pools/fictional-pool.json", []byte(`{"schema_version":99,"id":"fictional-pool"}`)); err != nil {
+			t.Fatal(err)
+		}
+
+		res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend}, "pool", "list", "--allow-unverified-backend", "-o", "json")
+		if res.code != exitOK || strings.Count(res.stderr, "ipam: warning: unverified backend;") != 1 ||
+			!strings.Contains(res.stderr, "ipam: warning: skipped pools with an unsupported schema") {
+			t.Fatalf("unrelated warning was suppressed: %+v", res)
+		}
+
+		decodeArray(t, res.stdout)
+	})
+	t.Run("AC-12/operation errors remain visible", func(t *testing.T) {
+		h := newPolicyHarness(t)
+
+		res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend}, "pool", "get", "fictional-pool", "--allow-unverified-backend")
+		if res.code != exitNotFound || !strings.Contains(res.stderr, "not found") ||
+			strings.Count(res.stderr, "ipam: warning: unverified backend;") != 1 {
+			t.Fatalf("operation error or warning missing: %+v", res)
+		}
+	})
+}
+
+type failingPolicyWriter struct{}
+
+func (failingPolicyWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
+type shortPolicyWriter struct{}
+
+func (shortPolicyWriter) Write(p []byte) (int, error) {
+	return len(p) - 1, nil
+}
+
+func TestBackendPolicyDiagnosticsAreRedacted(t *testing.T) {
+	t.Run("AC-24/malformed flag", func(t *testing.T) {
+		h := newPolicyHarness(t)
+
+		res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend}, "pool", "list", "--allow-unverified-backend=private-consent-marker")
+		if res.code != exitUsage || len(h.opened) != 0 || h.store.operations != 0 ||
+			strings.Contains(res.stderr, "private-consent-marker") || !strings.Contains(res.stderr, "--allow-unverified-backend") {
+			t.Fatalf("consent flag diagnostic is not static and redacted: %+v", res)
+		}
+	})
+
+	for _, consent := range []string{"true", "private-consent-marker"} {
+		t.Run("AC-24/"+consent, func(t *testing.T) {
+			h := newPolicyHarness(t)
+			backend := "s3://private-bucket-marker/private-prefix-marker?endpoint=https://private-endpoint-marker.example.test"
+
+			res := h.run(map[string]string{"IPAM_BACKEND": backend, "IPAM_ALLOW_UNVERIFIED_BACKEND": consent}, "pool", "list")
+			for _, marker := range []string{backend, "private-bucket-marker", "private-prefix-marker", "private-endpoint-marker", "private-consent-marker"} {
+				if strings.Contains(res.stderr+res.stdout, marker) {
+					t.Fatalf("diagnostic disclosed %q", marker)
+				}
+			}
+
+			if consent == "true" {
+				assertSupportWarning(t, res, 1)
+			} else if res.code != exitUsage || !strings.Contains(res.stderr, "IPAM_ALLOW_UNVERIFIED_BACKEND") {
+				t.Fatalf("missing static consent usage diagnostic: %+v", res)
+			}
+		})
+	}
+}
+
+func TestBackendSupportLinks(t *testing.T) {
+	t.Run("AC-21/AC-12/static warning", func(t *testing.T) {
+		h := newPolicyHarness(t)
+
+		res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend}, "pool", "list", "--allow-unverified-backend")
+		for _, text := range []string{"conditional creation", "replacement", "deletion", "S3", "PutObject", "DeleteObject", "If-None-Match: *", "If-Match: <etag>", "corruption", "opening", "--allow-unverified-backend", "IPAM_ALLOW_UNVERIFIED_BACKEND=true", "https://github.com/appvia/ipam#supported-backends"} {
+			if !strings.Contains(res.stderr, text) {
+				t.Errorf("warning missing %q: %q", text, res.stderr)
+			}
+		}
+	})
+}
+
+func TestConsentNeverBypassesURLValidation(t *testing.T) {
+	for _, backend := range []string{"s3://private-user:private-password@fictional-bucket", "mem://#private-fragment", "s3://fictional-bucket/a/../b", "s3://fictional-bucket?unknown=private-query", "s3://fictional-bucket?endpoint=ftp://private-endpoint"} {
+		for _, command := range []string{"pool", "doctor"} {
+			t.Run("AC-23/"+command+"/"+backend, func(t *testing.T) {
+				h := newPolicyHarness(t)
+
+				args := []string{command}
+				if command == "pool" {
+					args = append(args, "list")
+				}
+
+				res := h.run(map[string]string{"IPAM_BACKEND": backend}, append(args, "--allow-unverified-backend")...)
+				if res.code != exitUsage || len(h.opened) != 0 || h.store.operations != 0 || !strings.Contains(res.stderr, "invalid argument") {
+					t.Fatalf("invalid URL reached opener or lost category: %+v", res)
+				}
+
+				if strings.Contains(res.stderr, "private-") {
+					t.Fatalf("AC-24: invalid URL diagnostic leaked a private marker: %+v", res)
+				}
+			})
+		}
+	}
+
+	for _, args := range [][]string{{"--help"}, {"doctor", "--help"}, {"version"}} {
+		h := newPolicyHarness(t)
+
+		res := h.run(map[string]string{"IPAM_BACKEND": "invalid", "IPAM_ALLOW_UNVERIFIED_BACKEND": "private-malformed-consent"}, args...)
+		if res.code != exitOK || len(h.opened) != 0 || res.stderr != "" {
+			t.Fatalf("help/version required backend or consent: %+v", res)
+		}
+	}
 }
 
 func backends(t *testing.T) map[string]*harness {

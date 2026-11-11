@@ -16,6 +16,31 @@ import (
 	"github.com/appvia/ipam"
 )
 
+const supportRiskWarning = "ipam: warning: unverified backend; conditional creation, replacement and deletion must be enforced " +
+	"(S3: PutObject If-None-Match: * for creation and If-Match: <etag> for replacement; DeleteObject If-Match: <etag> for deletion). " +
+	"Enforcement cannot be checked by opening; ignoring these conditions risks concurrent corruption of pool and reservation documents. " +
+	"Consent: --allow-unverified-backend or IPAM_ALLOW_UNVERIFIED_BACKEND=true. " +
+	"See https://github.com/appvia/ipam#supported-backends"
+
+func (c *cli) warnUnverified(w io.Writer) error {
+	if c.warnedUnverified {
+		return nil
+	}
+
+	n, err := io.WriteString(w, supportRiskWarning+"\n")
+	if err != nil {
+		return err
+	}
+
+	if n != len(supportRiskWarning)+1 {
+		return io.ErrShortWrite
+	}
+
+	c.warnedUnverified = true
+
+	return nil
+}
+
 type parentJSON struct {
 	PoolID       string `json:"pool_id"`
 	AllocationID string `json:"allocation_id"`
