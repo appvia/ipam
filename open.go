@@ -34,10 +34,74 @@ var (
 // openTarget is a parsed backend URL. Credentials never appear in it; they
 // come from the environment.
 type openTarget struct {
-	scheme string
-	s3     s3.Config
-	dir    string
-	azure  azblob.Config
+	scheme         string
+	s3             s3.Config
+	s3EndpointHost string
+	dir            string
+	azure          azblob.Config
+}
+
+// BackendClassification describes the support policy for a validated backend
+// selection, not its connectivity, credentials or conditional-write enforcement.
+type BackendClassification string
+
+const (
+	// BackendVerified identifies a selection within the verified support boundary.
+	BackendVerified BackendClassification = "verified"
+	// BackendUnverified identifies a selection outside the verified support boundary.
+	BackendUnverified BackendClassification = "unverified"
+)
+
+// ClassifyBackend validates rawURL and reports its backend support classification
+// without opening storage, reading credentials or performing I/O. Invalid URLs
+// return an empty classification and an error matching ErrInvalidArgument.
+// Consent and previous backend use never change the classification.
+func ClassifyBackend(rawURL string) (BackendClassification, error) {
+	target, err := parseOpenURL(rawURL)
+	if err != nil {
+		return "", err
+	}
+
+	return classifyBackend(target), nil
+}
+
+func classifyBackend(target openTarget) BackendClassification {
+	switch target.scheme {
+	case "file", "mem":
+		return BackendVerified
+	case "azblob":
+		if target.azure.AccountURL != "" {
+			return BackendVerified
+		}
+	case "s3":
+		if target.s3.Endpoint == "" {
+			return BackendVerified
+		}
+
+		host := strings.ToLower(target.s3EndpointHost)
+		if strings.Contains(host, ":") || net.ParseIP(host) != nil {
+			return BackendUnverified
+		}
+
+		for _, suffix := range []string{".amazonaws.com", ".amazonaws.com.cn"} {
+			if len(host) > len(suffix) && strings.HasSuffix(host, suffix) {
+				return BackendVerified
+			}
+		}
+	}
+
+	return BackendUnverified
+}
+
+type allowUnverifiedBackendKey struct{}
+
+// WithAllowUnverifiedBackend derives a context carrying explicit consent for
+// unverified URL opening. Scope it to the intended opening; the parent is not
+// modified, and consent never changes classification or bypasses validation.
+// The marker is reserved for downstream enforcement; URL opening does not yet
+// require consent for unverified backends.
+func WithAllowUnverifiedBackend(ctx context.Context) context.Context {
+	return context.WithValue(ctx, allowUnverifiedBackendKey{}, true)
 }
 
 // OpenStorage builds the storage backend named by rawURL. Supported forms:
@@ -193,6 +257,8 @@ func parseS3(u *url.URL) (openTarget, error) {
 
 	cfg := s3.Config{Bucket: u.Host, Prefix: prefix}
 
+	var endpointHost string
+
 	for key, values := range query {
 		if len(values) != 1 {
 			return openTarget{}, invalidURL("s3 query parameter is repeated")
@@ -208,11 +274,13 @@ func parseS3(u *url.URL) (openTarget, error) {
 
 			cfg.Region = value
 		case "endpoint":
-			if err := validateEndpoint(value); err != nil {
+			endpoint, err := validateEndpoint(value)
+			if err != nil {
 				return openTarget{}, err
 			}
 
 			cfg.Endpoint = value
+			endpointHost = endpoint.Hostname()
 		case "path_style":
 			switch value {
 			case "true":
@@ -226,7 +294,7 @@ func parseS3(u *url.URL) (openTarget, error) {
 		}
 	}
 
-	return openTarget{scheme: "s3", s3: cfg}, nil
+	return openTarget{scheme: "s3", s3: cfg, s3EndpointHost: endpointHost}, nil
 }
 
 func parseAzblob(u *url.URL) (openTarget, error) {
@@ -341,15 +409,15 @@ func blobPath(p string) (string, error) {
 	return rel, nil
 }
 
-func validateEndpoint(raw string) error {
+func validateEndpoint(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || strings.Contains(raw, "#") ||
 		(u.Scheme != "http" && u.Scheme != "https") ||
 		u.Host == "" || u.User != nil || u.RawQuery != "" || u.Opaque != "" {
-		return invalidURL("s3 endpoint must be an http or https URL without user info, query or fragment")
+		return nil, invalidURL("s3 endpoint must be an http or https URL without user info, query or fragment")
 	}
 
-	return nil
+	return u, nil
 }
 
 func hasControl(s string) bool {
