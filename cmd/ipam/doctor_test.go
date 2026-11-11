@@ -8,9 +8,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"net/url"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,6 +37,8 @@ type recordingStore struct {
 
 	mu          sync.Mutex
 	writes      []string
+	calls       []string
+	contexts    []context.Context
 	propagation bool
 }
 
@@ -41,13 +50,16 @@ func (r *recordingStore) note(ctx context.Context, write string) {
 		r.propagation = true
 	}
 
-	if write != "" {
+	r.calls = append(r.calls, write)
+	r.contexts = append(r.contexts, ctx)
+
+	if strings.HasPrefix(write, "create ") || strings.HasPrefix(write, "put ") || strings.HasPrefix(write, "delete ") {
 		r.writes = append(r.writes, write)
 	}
 }
 
 func (r *recordingStore) Get(ctx context.Context, key string) ([]byte, storage.Version, error) {
-	r.note(ctx, "")
+	r.note(ctx, "get "+key)
 
 	if err := r.getErr[key]; err != nil {
 		return nil, "", err
@@ -57,7 +69,7 @@ func (r *recordingStore) Get(ctx context.Context, key string) ([]byte, storage.V
 }
 
 func (r *recordingStore) List(ctx context.Context, prefix string) ([]string, error) {
-	r.note(ctx, "")
+	r.note(ctx, "list "+prefix)
 
 	if r.listErr != nil {
 		return nil, r.listErr
@@ -115,7 +127,7 @@ type inspectingStore struct {
 }
 
 func (i *inspectingStore) Inspect(ctx context.Context) (storage.Info, error) {
-	i.note(ctx, "")
+	i.note(ctx, "inspect")
 
 	return i.info, i.err
 }
@@ -507,5 +519,520 @@ func TestDoctorUsageErrors(t *testing.T) {
 
 	if writes := store.recordedWrites(); len(writes) != 0 {
 		t.Fatalf("writes = %q, want none", writes)
+	}
+}
+
+const (
+	verifiedClassificationDetail = "verified support policy; not evidence of connectivity, permission or conditional-write enforcement"
+	allowedClassificationDetail  = "unverified; explicit consent permits use but does not prove conditional-write enforcement. " +
+		"Consent: --allow-unverified-backend or IPAM_ALLOW_UNVERIFIED_BACKEND=true. See https://github.com/appvia/ipam#supported-backends"
+	refusedClassificationDetail = "unverified; no explicit consent; ordinary use refused. Use --allow-unverified-backend or " +
+		"IPAM_ALLOW_UNVERIFIED_BACKEND=true after evaluating conditional-write safety. See https://github.com/appvia/ipam#supported-backends"
+	probeSkipDetail = "write probes skipped: backend is unverified and no opt-in was supplied"
+)
+
+// assertDoctorRows compares the shared row contract in either output format.
+func assertDoctorRows(t *testing.T, res result, format, overall string, code int, rows ...doctorCheck) {
+	t.Helper()
+
+	if res.code != code {
+		t.Fatalf("exit = %d, want %d: %+v", res.code, code, res)
+	}
+
+	if format == "json" {
+		report := decodeDoctor(t, res.stdout)
+		if report.Result != overall || len(report.Checks) < len(rows) {
+			t.Fatalf("report = %+v, want result %s and rows %+v", report, overall, rows)
+		}
+
+		for i, row := range rows {
+			if got := report.find(t, row.Check, row.Pool); got != row {
+				t.Errorf("row = %+v, want %+v", got, row)
+			}
+
+			if i == 0 && report.Checks[0] != row {
+				t.Errorf("first row = %+v, want %+v", report.Checks[0], row)
+			}
+		}
+
+		var wire struct {
+			Checks []map[string]json.RawMessage `json:"checks"`
+		}
+
+		if err := json.Unmarshal([]byte(res.stdout), &wire); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(wire.Checks[0]) != 3 || wire.Checks[0]["pool"] != nil || wire.Checks[0]["stats"] != nil {
+			t.Fatalf("classification row has unexpected fields: %v", wire.Checks[0])
+		}
+
+		return
+	}
+
+	lines := strings.Split(strings.TrimSpace(res.stdout), "\n")
+	if !strings.Contains(lines[0], "CHECK") || lines[len(lines)-1] != "RESULT: "+overall {
+		t.Fatalf("invalid table: %s", res.stdout)
+	}
+
+	for i, row := range rows {
+		pool := row.Pool
+		if pool == "" {
+			pool = "-"
+		}
+
+		want := strings.Fields(strings.Join([]string{row.Check, pool, row.Status, row.Detail}, " "))
+		found := false
+
+		for _, line := range lines[1:] {
+			if slices.Equal(strings.Fields(line), want) {
+				found = true
+			}
+		}
+
+		if !found || (i == 0 && !slices.Equal(strings.Fields(lines[1]), want)) {
+			t.Errorf("missing or misplaced row %+v: %s", row, res.stdout)
+		}
+	}
+}
+
+func TestDoctorVerifiedClassification(t *testing.T) {
+	for _, format := range []string{"table", "json"} {
+		for _, state := range []struct {
+			name, result string
+			info         storage.Info
+			code         int
+		}{
+			{"healthy", "pass", protected(), exitOK},
+			{"unknown", "warn", storage.Info{}, exitOK},
+			{"unprotected", "fail", storage.Info{Versioning: storage.No, SoftDelete: storage.No}, exitDoctorFailed},
+		} {
+			t.Run("AC-13/"+format+"/"+state.name, func(t *testing.T) {
+				store := &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: state.info}
+				res := runDoctor(t, store, "-o", format)
+				assertDoctorRows(t, res, format, state.result, state.code,
+					doctorCheck{"backend-classification", "", statusPass, verifiedClassificationDetail})
+			})
+		}
+	}
+}
+
+func TestDoctorAllowedUnverifiedClassification(t *testing.T) {
+	for _, format := range []string{"table", "json"} {
+		t.Run("AC-14/"+format, func(t *testing.T) {
+			store := &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: protected()}
+			res := runDoctor(t, store, "--backend", testUnverifiedBackend, "--allow-unverified-backend", "-o", format)
+			assertDoctorRows(t, res, format, "warn", exitOK,
+				doctorCheck{"backend-classification", "", statusWarn, allowedClassificationDetail})
+			assertSupportWarning(t, res, 1)
+		})
+	}
+}
+
+func TestDoctorRefusedUnverifiedClassification(t *testing.T) {
+	for _, format := range []string{"table", "json"} {
+		t.Run("AC-15/"+format+"/explicit false overrides environment", func(t *testing.T) {
+			h := newPolicyHarness(t)
+			res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend, "IPAM_ALLOW_UNVERIFIED_BACKEND": "true"},
+				"doctor", "--allow-unverified-backend=false", "-o", format)
+			assertDoctorRows(t, res, format, "fail", exitDoctorFailed,
+				doctorCheck{"backend-classification", "", statusFail, refusedClassificationDetail},
+				doctorCheck{"write-probe", "", statusWarn, probeSkipDetail})
+			assertSupportWarning(t, res, 0)
+			assertOpeningConsent(t, h, true)
+		})
+
+		t.Run("AC-15/"+format, func(t *testing.T) {
+			store := &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: protected()}
+			res := runDoctor(t, store, "--backend", testUnverifiedBackend, "-o", format)
+			assertDoctorRows(t, res, format, "fail", exitDoctorFailed,
+				doctorCheck{"backend-classification", "", statusFail, refusedClassificationDetail})
+			assertSupportWarning(t, res, 0)
+		})
+	}
+}
+
+func TestDoctorRefusalKeepsReadOnlyChecks(t *testing.T) {
+	for _, state := range []string{"readable", "list denied", "pool denied", "inspect denied", "reservations denied"} {
+		t.Run("AC-16/"+state, func(t *testing.T) {
+			store := &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: protected()}
+
+			switch state {
+			case "list denied":
+				store.listErr = storage.ErrAccessDenied
+			case "pool denied":
+				store.getErr = map[string]error{"pools/p.json": storage.ErrAccessDenied}
+			case "inspect denied":
+				store.err = storage.ErrAccessDenied
+			case "reservations denied":
+				store.getErr = map[string]error{"reservations/p.json": storage.ErrAccessDenied}
+			}
+
+			res := runDoctor(t, store, "--backend", testUnverifiedBackend, "-o", "json")
+			assertDoctorRows(t, res, "json", "fail", exitDoctorFailed,
+				doctorCheck{"backend-classification", "", statusFail, refusedClassificationDetail})
+			report := decodeDoctor(t, res.stdout)
+
+			if !slices.Contains(store.calls, "list pools/") {
+				t.Fatal("backend was not read")
+			}
+
+			if state == "list denied" || state == "pool denied" {
+				if got := report.find(t, "backend", ""); got.Status != statusFail || !strings.Contains(got.Detail, "access denied") {
+					t.Fatalf("real reachability failure lost: %+v", got)
+				}
+
+				return
+			}
+
+			for _, call := range []string{"get pools/p.json", "inspect", "get reservations/p.json"} {
+				if !slices.Contains(store.calls, call) {
+					t.Errorf("read-only call %q absent from %q", call, store.calls)
+				}
+			}
+
+			for _, check := range []string{"backend", "data-protection", "hierarchical-namespace", "fragmentation"} {
+				pool := ""
+				if check == "fragmentation" {
+					pool = "p"
+				}
+
+				got := report.find(t, check, pool)
+				if state == "readable" && got.Status != statusPass {
+					t.Errorf("available check did not pass: %+v", got)
+				}
+			}
+
+			if state == "inspect denied" && report.find(t, "data-protection", "").Status != statusFail {
+				t.Fatal("inspection failure lost")
+			}
+
+			if state == "reservations denied" && report.find(t, "fragmentation", "p").Status != statusWarn {
+				t.Fatal("unreadable statistics lost")
+			}
+		})
+	}
+}
+
+func TestDoctorUnverifiedWithoutConsentNeverWrites(t *testing.T) {
+	for _, format := range []string{"table", "json"} {
+		for _, expectation := range []string{"--expect-write", "--expect-no-write"} {
+			for _, scenario := range []string{"discovered", "union", "expectation-only", "no-pools", "list-denied", "pool-denied"} {
+				t.Run("AC-28/"+format+"/"+expectation+"/"+scenario, func(t *testing.T) {
+					store := &inspectingStore{recordingStore: &recordingStore{Storage: memory.New()}, info: protected()}
+					args := []string{"--backend", testUnverifiedBackend, "-o", format}
+					pools := []string{""}
+
+					switch scenario {
+					case "discovered", "union", "pool-denied":
+						store.Storage = newPoolStore(t)
+
+						args = append(args, expectation, "p")
+						pools = []string{"p"}
+
+						if scenario == "pool-denied" {
+							store.getErr = map[string]error{"pools/p.json": storage.ErrAccessDenied}
+						}
+
+						if scenario == "union" {
+							args = append(args, expectation, "z", expectation, "a", expectation, "p")
+							pools = []string{"a", "p", "z"}
+						}
+					case "expectation-only", "list-denied":
+						args = append(args, expectation, "z", expectation, "a")
+						pools = []string{"a", "z"}
+
+						if scenario == "list-denied" {
+							store.listErr = storage.ErrAccessDenied
+						}
+					}
+
+					res := runDoctor(t, store, args...)
+
+					rows := []doctorCheck{{"backend-classification", "", statusFail, refusedClassificationDetail}}
+					for _, pool := range pools {
+						rows = append(rows, doctorCheck{"write-probe", pool, statusWarn, probeSkipDetail})
+					}
+
+					assertDoctorRows(t, res, format, "fail", exitDoctorFailed, rows...)
+
+					if writes := store.recordedWrites(); len(writes) != 0 {
+						t.Fatalf("create/put/delete calls = %q, want exactly zero", writes)
+					}
+
+					var probePools []string
+
+					if format == "json" {
+						for _, check := range decodeDoctor(t, res.stdout).Checks {
+							if check.Check == "write-probe" {
+								probePools = append(probePools, check.Pool)
+							}
+						}
+					} else {
+						for _, line := range strings.Split(res.stdout, "\n") {
+							fields := strings.Fields(line)
+							if len(fields) > 1 && fields[0] == "write-probe" {
+								pool := fields[1]
+								if pool == "-" {
+									pool = ""
+								}
+
+								probePools = append(probePools, pool)
+							}
+						}
+					}
+
+					if !slices.Equal(probePools, pools) {
+						t.Fatalf("skip pools = %q, want sorted union %q", probePools, pools)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDoctorConsentRetainsExistingProbe(t *testing.T) {
+	for _, backend := range []string{"mem://", testUnverifiedBackend} {
+		for _, allowed := range []bool{false, true} {
+			t.Run("AC-17/AC-27/AC-28/"+backend+"/"+fmt.Sprint(allowed), func(t *testing.T) {
+				parent := t.Context()
+				store := &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: protected()}
+
+				before, version, err := store.Storage.Get(parent, "reservations/p.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				var stdout, stderr bytes.Buffer
+
+				args := []string{"doctor", "--backend", backend, "-o", "json"}
+				if allowed {
+					args = append(args, "--allow-unverified-backend")
+				}
+
+				opened := 0
+				code := runCLI(parent, args, &stdout, &stderr, func(string) string { return "" }, openClient,
+					func(ctx context.Context, raw string) (storage.Storage, error) {
+						opened++
+
+						want := parent
+						if allowed || backend == testUnverifiedBackend {
+							want = ipam.WithAllowUnverifiedBackend(parent)
+						}
+
+						if raw != backend || !reflect.DeepEqual(ctx, want) || len(store.calls) != 0 {
+							t.Fatal("diagnostic construction changed selection, consent or performed I/O")
+						}
+
+						return store, nil
+					})
+
+				wantCode := exitOK
+				if backend == testUnverifiedBackend && !allowed {
+					wantCode = exitDoctorFailed
+				}
+
+				if code != wantCode || opened != 1 {
+					t.Fatalf("exit %d, opens %d: %s %s", code, opened, stdout.String(), stderr.String())
+				}
+
+				for _, ctx := range store.contexts {
+					if ctx != parent {
+						t.Fatal("derived opening consent leaked into checks")
+					}
+				}
+
+				if wantCode == exitOK {
+					wantCalls := []string{"list pools/", "get pools/p.json", "inspect", "get reservations/p.json",
+						"put reservations/p.json " + string(probeVersion), "get pools/p.json", "get reservations/p.json"}
+					if !slices.Equal(store.calls, wantCalls) {
+						t.Fatalf("probe/read order = %q, want %q", store.calls, wantCalls)
+					}
+				}
+
+				after, afterVersion, err := store.Storage.Get(parent, "reservations/p.json")
+				if err != nil || version != afterVersion || !bytes.Equal(before, after) {
+					t.Fatal("probe bytes or stored version changed")
+				}
+			})
+		}
+	}
+}
+
+func runDoctorOpener(t *testing.T, backend, consent, format string, opener openStorageFunc) result {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	code := runCLI(t.Context(), []string{"doctor", "--backend", backend, "--allow-unverified-backend=" + consent, "-o", format},
+		&stdout, &stderr, func(string) string { return "" }, openClient, opener)
+
+	return result{stdout: stdout.String(), stderr: stderr.String(), code: code}
+}
+
+func testDoctorPolicyRedaction(t *testing.T) {
+	t.Helper()
+
+	backend := "s3://private-bucket-marker/private-prefix-marker?endpoint=https://private-endpoint-marker.example.test"
+
+	for _, consent := range []string{"false", "true"} {
+		for _, format := range []string{"table", "json"} {
+			for _, constructionFails := range []bool{false, true} {
+				t.Run("AC-24/doctor/"+consent+"/"+format+"/"+fmt.Sprint(constructionFails), func(t *testing.T) {
+					res := runDoctorOpener(t, backend, consent, format, func(context.Context, string) (storage.Storage, error) {
+						if constructionFails {
+							return nil, errors.New("private-credential-marker " + backend)
+						}
+
+						return &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: protected()}, nil
+					})
+
+					status, detail, overall, code := statusFail, refusedClassificationDetail, "fail", exitDoctorFailed
+					if consent == "true" {
+						status, detail = statusWarn, allowedClassificationDetail
+
+						if !constructionFails {
+							overall, code = "warn", exitOK
+						}
+					}
+
+					rows := []doctorCheck{{"backend-classification", "", status, detail}}
+					if constructionFails {
+						rows = append(rows, doctorCheck{"backend", "", statusFail, "cannot construct unverified backend for diagnosis"})
+
+						if consent == "false" {
+							rows = append(rows, doctorCheck{"write-probe", "", statusWarn, probeSkipDetail})
+						}
+					}
+
+					assertDoctorRows(t, res, format, overall, code, rows...)
+
+					for _, marker := range []string{backend, "private-bucket-marker", "private-prefix-marker", "private-endpoint-marker", "private-credential-marker"} {
+						if strings.Contains(res.stdout+res.stderr, marker) {
+							t.Fatalf("doctor disclosed synthetic configuration marker %q", marker)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAzureContainerFormUnverifiedPolicy(t *testing.T) {
+	for _, consent := range []string{"false", "true"} {
+		for _, format := range []string{"table", "json"} {
+			t.Run("AC-15/AC-23/AC-24/AC-28/doctor/"+consent+"/"+format, func(t *testing.T) {
+				store := &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: protected()}
+				res := runDoctorOpener(t, "azblob://fictional-container/private-prefix-marker", consent, format,
+					func(context.Context, string) (storage.Storage, error) { return store, nil })
+
+				status, detail, overall, code, warnings := statusFail, refusedClassificationDetail, "fail", exitDoctorFailed, 0
+				if consent == "true" {
+					status, detail, overall, code, warnings = statusWarn, allowedClassificationDetail, "warn", exitOK, 1
+				}
+
+				assertDoctorRows(t, res, format, overall, code, doctorCheck{"backend-classification", "", status, detail})
+				assertSupportWarning(t, res, warnings)
+
+				if consent == "false" && len(store.recordedWrites()) != 0 {
+					t.Fatal("container-form Azure probed without consent")
+				}
+
+				for _, connection := range []string{"", "synthetic-invalid-connection-marker",
+					"AccountName=private-account-marker;AccountKey=private-key-marker;BlobEndpoint=https://private-endpoint-marker.example.test"} {
+					t.Setenv("AZURE_STORAGE_CONNECTION_STRING", connection)
+
+					res = runDoctorOpener(t, "azblob://fictional-container/private-prefix-marker", consent, format, ipam.OpenStorage)
+					assertDoctorRows(t, res, format, "fail", exitDoctorFailed,
+						doctorCheck{"backend-classification", "", status, detail},
+						doctorCheck{"backend", "", statusFail, "cannot construct unverified backend for diagnosis"})
+
+					for _, marker := range []string{"private-account-marker", "private-key-marker", "private-endpoint-marker", "private-prefix-marker", "synthetic-invalid-connection-marker"} {
+						if strings.Contains(res.stdout+res.stderr, marker) {
+							t.Fatalf("constructor diagnostic disclosed %q", marker)
+						}
+					}
+				}
+			})
+		}
+	}
+
+	t.Run("AC-13/AC-27/doctor/account form", func(t *testing.T) {
+		store := &inspectingStore{recordingStore: &recordingStore{Storage: memory.New()}, info: protected()}
+		res := runDoctor(t, store, "--backend", "azblob://fictionalaccount.blob.core.windows.net/fictional-container", "-o", "json")
+		assertDoctorRows(t, res, "json", "pass", exitOK,
+			doctorCheck{"backend-classification", "", statusPass, verifiedClassificationDetail})
+	})
+}
+
+func TestDoctorVerifiedErrorsPreserved(t *testing.T) {
+	for _, format := range []string{"table", "json"} {
+		for _, cause := range []error{errors.New("synthetic constructor failure"), ipam.ErrInvalidArgument} {
+			t.Run("AC-27/"+format+"/"+cause.Error(), func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+
+				c := &cli{stdout: &stdout, getenv: func(string) string { return "" },
+					openStorage: func(context.Context, string) (storage.Storage, error) { return nil, cause }}
+				cmd := c.rootCommand()
+				cmd.SetOut(&stdout)
+				cmd.SetErr(&stderr)
+				cmd.SetArgs([]string{"doctor", "--backend", "mem://", "-o", format})
+
+				if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, cause) || stdout.Len() != 0 {
+					t.Fatalf("verified constructor failure changed: %v, stdout %q", err, stdout.String())
+				}
+			})
+		}
+	}
+}
+
+func TestDoctorDiagnosticConstructionHasNoIO(t *testing.T) {
+	for _, consent := range []string{"false", "true"} {
+		t.Run("AC-17/"+consent, func(t *testing.T) {
+			for key, value := range map[string]string{
+				"AWS_ACCESS_KEY_ID": "dummy-key", "AWS_SECRET_ACCESS_KEY": "dummy-secret",
+				"AWS_SESSION_TOKEN": "", "AWS_PROFILE": "", "AWS_CONFIG_FILE": "/dev/null",
+				"AWS_SHARED_CREDENTIALS_FILE": "/dev/null", "AWS_EC2_METADATA_DISABLED": "true",
+			} {
+				t.Setenv(key, value)
+			}
+
+			var requests atomic.Int64
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusBadRequest)
+			}))
+			t.Cleanup(server.Close)
+
+			backend := "s3://fictional-bucket/prefix?region=us-east-1&path_style=true&endpoint=" + url.QueryEscape(server.URL)
+			store := &inspectingStore{recordingStore: &recordingStore{Storage: newPoolStore(t)}, info: protected()}
+			opened := 0
+			res := runDoctorOpener(t, backend, consent, "json", func(ctx context.Context, raw string) (storage.Storage, error) {
+				opened++
+
+				handle, err := ipam.OpenStorage(ctx, raw)
+				if err != nil || handle == nil {
+					t.Fatalf("diagnostic construction failed: %v", err)
+				}
+
+				if requests.Load() != 0 || len(store.calls) != 0 {
+					t.Fatal("construction issued requests or diagnostic storage operations")
+				}
+
+				return store, nil
+			})
+
+			wantCode, wantWrites := exitDoctorFailed, 0
+			if consent == "true" {
+				wantCode, wantWrites = exitOK, 1
+			}
+
+			if res.code != wantCode || opened != 1 || requests.Load() != 0 ||
+				len(store.calls) == 0 || len(store.recordedWrites()) != wantWrites {
+				t.Fatalf("construction and later diagnosis not separated: result %+v, opens %d, requests %d, calls %q",
+					res, opened, requests.Load(), store.calls)
+			}
+		})
 	}
 }
