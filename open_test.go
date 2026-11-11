@@ -4,14 +4,21 @@
 package ipam
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/appvia/ipam/storage"
 	"github.com/appvia/ipam/storage/azblob"
@@ -70,15 +77,10 @@ func assertRoundTrip(t *testing.T, store storage.Storage) {
 	}
 }
 
-func TestOpenRejectsInvalidURLs(t *testing.T) {
-	isolateEnv(t)
-
+func invalidOpenURLs() []struct{ name, url string } {
 	long := "s3://bkt/" + strings.Repeat("a", maxPrefixBytes+1)
 
-	tests := []struct {
-		name string
-		url  string
-	}{
+	return []struct{ name, url string }{
 		{"empty", ""},
 		{"whitespace only", "   "},
 		{"leading space", " s3://bkt/p"},
@@ -154,9 +156,22 @@ func TestOpenRejectsInvalidURLs(t *testing.T) {
 		{"s3 dot segment", "s3://bkt/./p"},
 		{"azblob prefix too long", "azblob://cnt/" + strings.Repeat("a", maxPrefixBytes+1)},
 		{"s3 IP-style bucket", "s3://192.168.1.1/p"},
+		{"malformed path escape", "s3://bkt/%zz"},
+		{"azblob container with port", "azblob://cnt:10000/p"},
+		{"azblob account prefix too long", "azblob://acct.blob.core.windows.net/cnt/" + strings.Repeat("a", maxPrefixBytes+1)},
+		{"file empty query marker", "file:///synthetic/store?"},
+		{"mem empty query marker", "mem://?"},
+		{"file encoded backslash", "file:///synthetic/a%5Cb"},
+		{"azblob encoded backslash", "azblob://cnt/a%5Cb"},
+		{"s3 trailing double slash", "s3://bkt/a//"},
+		{"azblob account trailing double slash", "azblob://acct.blob.core.windows.net/cnt//"},
 	}
+}
 
-	for _, tc := range tests {
+func TestOpenRejectsInvalidURLs(t *testing.T) {
+	isolateEnv(t)
+
+	for _, tc := range invalidOpenURLs() {
 		t.Run(tc.name, func(t *testing.T) {
 			// The parser itself must reject every row, so a later backend
 			// failure (missing region or credential) cannot hide a broken guard.
@@ -195,7 +210,7 @@ func TestOpenParsesTargets(t *testing.T) {
 			openTarget{scheme: "s3", s3: s3.Config{
 				Bucket: "bkt", Prefix: "p", Region: "eu-west-1",
 				Endpoint: "https://s3.example.test:9000", UsePathStyle: true,
-			}},
+			}, s3EndpointHost: "s3.example.test"},
 		},
 		{"s3 explicit path_style false", "s3://bkt?path_style=false", openTarget{scheme: "s3", s3: s3.Config{Bucket: "bkt"}}},
 		{
@@ -221,7 +236,7 @@ func TestOpenParsesTargets(t *testing.T) {
 				t.Fatalf("parseOpenURL() error = %v", err)
 			}
 
-			if got.scheme != tc.want.scheme || got.s3 != tc.want.s3 || got.dir != tc.want.dir ||
+			if got.scheme != tc.want.scheme || got.s3 != tc.want.s3 || got.s3EndpointHost != tc.want.s3EndpointHost || got.dir != tc.want.dir ||
 				got.azure.AccountURL != tc.want.azure.AccountURL ||
 				got.azure.Container != tc.want.azure.Container ||
 				got.azure.Prefix != tc.want.azure.Prefix {
@@ -507,5 +522,336 @@ func TestFileDir(t *testing.T) {
 				t.Fatalf("fileDir(%q, %v) = %q, want %q", tc.rel, tc.windows, got, tc.want)
 			}
 		})
+	}
+}
+
+func assertBackendClassification(t *testing.T, raw string, want BackendClassification) {
+	t.Helper()
+
+	got, err := ClassifyBackend(raw)
+	if err != nil || got != want {
+		t.Fatalf("ClassifyBackend() = %q, %v; want %q, nil", got, err, want)
+	}
+}
+
+func TestBackendClassificationDefaultS3(t *testing.T) {
+	t.Run("AC-1", func(t *testing.T) {
+		if BackendVerified != "verified" || BackendUnverified != "unverified" {
+			t.Fatal("classification values do not match the public contract")
+		}
+
+		for _, raw := range []string{
+			"s3://bkt", "s3://bkt/p", "s3://bkt/p?region=eu-west-1&path_style=true",
+		} {
+			assertBackendClassification(t, raw, BackendVerified)
+		}
+	})
+}
+
+func TestBackendClassificationAWSSuffixes(t *testing.T) {
+	t.Run("AC-2", func(t *testing.T) {
+		for _, endpoint := range []string{
+			"https://s3.eu-west-1.amazonaws.com",
+			"https://s3.cn-north-1.amazonaws.com.cn",
+			"https://S3.EU-WEST-1.AMAZONAWS.COM:443/path",
+			"http://S3.CN-NORTH-1.AMAZONAWS.COM.CN:9000/path",
+		} {
+			t.Run(endpoint, func(t *testing.T) {
+				assertBackendClassification(t, "s3://bkt/p?endpoint="+url.QueryEscape(endpoint), BackendVerified)
+			})
+		}
+	})
+}
+
+func TestVerifiedBackendCompatibility(t *testing.T) {
+	t.Run("AC-3", func(t *testing.T) {
+		for _, raw := range []string{
+			"azblob://acct.blob.core.windows.net/cnt/p", "file:///synthetic/store", "mem://",
+		} {
+			assertBackendClassification(t, raw, BackendVerified)
+		}
+
+		t.Run("memory compatibility", TestOpenMemURLIsUsableStore)
+		t.Run("file compatibility", TestOpenFileURLGivesWorkingLocalStore)
+		t.Run("Azure account compatibility", TestOpenAzureAccountFormBuildsWithoutNetwork)
+	})
+}
+
+func TestUnverifiedClassificationIndependentOfLocation(t *testing.T) {
+	t.Run("AC-4", func(t *testing.T) {
+		for _, bucket := range []string{"bkt", "amazonaws.com", "other-bucket"} {
+			for _, prefix := range []string{"", "/amazonaws.com.cn", "/nested/prefix"} {
+				for _, style := range []string{"", "&path_style=true", "&path_style=false"} {
+					raw := "s3://" + bucket + prefix + "?endpoint=https://store.example.test:9000/path" + style
+					assertBackendClassification(t, raw, BackendUnverified)
+				}
+			}
+		}
+	})
+}
+
+func TestBackendClassificationRejectsSuffixLookalikes(t *testing.T) {
+	t.Run("AC-25", func(t *testing.T) {
+		for _, endpoint := range []string{
+			"https://amazonaws.com.example.test", "https://amazonaws.com.cn.example.test",
+			"https://notamazonaws.com", "https://notamazonaws.com.cn",
+			"https://amazonaws.com", "https://amazonaws.com.cn",
+			"https://.amazonaws.com", "https://.amazonaws.com.cn",
+			"https://store.example.test/amazonaws.com", "https://store.example.test/amazonaws.com.cn",
+			"https://s3.amazonaws.com.", "https://s3.amazonaws.com.cn.",
+			"http://192.0.2.1:9000/amazonaws.com", "http://[2001:db8::1]:9000/amazonaws.com.cn",
+			"http://[fe80::1%25zone.amazonaws.com]:9000",
+		} {
+			t.Run(endpoint, func(t *testing.T) {
+				assertBackendClassification(t, "s3://bkt/p?endpoint="+url.QueryEscape(endpoint), BackendUnverified)
+			})
+		}
+	})
+}
+
+func TestClassifyBackendWithoutOpening(t *testing.T) {
+	t.Run("AC-8", func(t *testing.T) {
+		// No region or credential configuration is required for classification.
+		assertBackendClassification(t, "s3://bkt", BackendVerified)
+		assertBackendClassification(t, "s3://bkt?endpoint=https://store.example.test", BackendUnverified)
+		assertClassificationIsPure(t)
+	})
+}
+
+func TestClassificationAndOpenHaveNoIO(t *testing.T) {
+	t.Run("AC-17/classification", func(t *testing.T) {
+		assertClassificationIsPure(t)
+
+		dir := filepath.Join(t.TempDir(), "not-created")
+		for _, tc := range []struct {
+			raw  string
+			want BackendClassification
+		}{
+			{"mem://", BackendVerified},
+			{fileURL(dir), BackendVerified},
+			{"s3://bkt", BackendVerified},
+			{"s3://bkt?endpoint=https://s3.amazonaws.com", BackendVerified},
+			{"s3://bkt?endpoint=https://store.example.test", BackendUnverified},
+			{"azblob://acct.blob.core.windows.net/cnt", BackendVerified},
+			{"azblob://cnt", BackendUnverified},
+		} {
+			assertBackendClassification(t, tc.raw, tc.want)
+		}
+
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("classification created a local store: stat error = %v", err)
+		}
+	})
+}
+
+// Audit the entire classification call graph, including validation, rather than
+// adding mutable constructor/credential hooks to a pure public API. Only pure
+// standard-library calls and recursively checked local functions are allowed.
+func assertClassificationIsPure(t *testing.T) {
+	t.Helper()
+
+	fset := token.NewFileSet()
+
+	file, err := parser.ParseFile(fset, "open.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	functions := make(map[string]*ast.FuncDecl)
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil {
+			functions[fn.Name.Name] = fn
+		}
+	}
+
+	allowed := map[string]bool{
+		"len": true, "fmt.Errorf": true, "net.ParseIP": true,
+		"url.Parse": true, "url.ParseQuery": true,
+		"strings.TrimSpace": true, "strings.Contains": true, "strings.ContainsRune": true,
+		"strings.HasPrefix": true, "strings.HasSuffix": true, "strings.ToLower": true,
+		"strings.TrimSuffix": true, "strings.TrimPrefix": true, "strings.Split": true,
+		"strings.Cut": true, "strings.CutSuffix": true,
+		"s3BucketPattern.MatchString": true, "s3RegionPattern.MatchString": true,
+		"azureAccountPattern.MatchString": true, "azureContainerPattern.MatchString": true,
+		"u.Hostname": true, "endpoint.Hostname": true,
+	}
+	visited := make(map[string]bool)
+
+	var check func(string)
+
+	check = func(name string) {
+		if visited[name] {
+			return
+		}
+
+		visited[name] = true
+
+		fn, ok := functions[name]
+		if !ok {
+			t.Fatalf("classification function %s not found in open.go", name)
+		}
+
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+
+			callee := ""
+
+			switch fun := call.Fun.(type) {
+			case *ast.Ident:
+				callee = fun.Name
+			case *ast.SelectorExpr:
+				if receiver, ok := fun.X.(*ast.Ident); ok {
+					callee = receiver.Name + "." + fun.Sel.Name
+				}
+			}
+
+			if _, ok := functions[callee]; ok {
+				check(callee)
+			} else if !allowed[callee] {
+				t.Errorf("classification can reach non-pure call %q at %s; want zero constructors, credential reads, requests or diagnostic writes", callee, fset.Position(call.Pos()))
+			}
+
+			return true
+		})
+	}
+
+	check("ClassifyBackend")
+}
+
+func TestClassificationNeverLearnsOrPromotes(t *testing.T) {
+	t.Run("AC-18", func(t *testing.T) {
+		var requests atomic.Int64
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			w.Header().Set("ETag", `"synthetic-version"`)
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+		t.Setenv("AWS_ACCESS_KEY_ID", "dummy-access-key")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "dummy-secret-key")
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+		t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "absent"))
+		t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "absent"))
+
+		raw := "s3://bkt/p?region=eu-west-1&path_style=true&endpoint=" + url.QueryEscape(srv.URL)
+		for _, ctx := range []context.Context{t.Context(), WithAllowUnverifiedBackend(t.Context()), t.Context()} {
+			assertBackendClassification(t, raw, BackendUnverified)
+
+			store, err := OpenStorage(ctx, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := store.CreateIfAbsent(ctx, "synthetic.json", []byte(`{}`)); err != nil {
+				t.Fatal(err)
+			}
+
+			assertBackendClassification(t, raw, BackendUnverified)
+		}
+
+		if got := requests.Load(); got != 3 {
+			t.Fatalf("successful storage uses = %d, want 3", got)
+		}
+	})
+}
+
+func TestConsentNeverBypassesURLValidation(t *testing.T) {
+	t.Run("AC-23", func(t *testing.T) {
+		for _, tc := range invalidOpenURLs() {
+			t.Run(tc.name, func(t *testing.T) {
+				classification, err := ClassifyBackend(tc.url)
+				if classification != "" || !errors.Is(err, ErrInvalidArgument) {
+					t.Fatalf("ClassifyBackend() = %q, %v; want empty result and ErrInvalidArgument", classification, err)
+				}
+
+				if strings.Contains(err.Error(), secretMarker) {
+					t.Fatal("classification error echoes a secret marker")
+				}
+
+				for _, ctx := range []context.Context{t.Context(), WithAllowUnverifiedBackend(t.Context())} {
+					store, err := OpenStorage(ctx, tc.url)
+					if store != nil || !errors.Is(err, ErrInvalidArgument) {
+						t.Fatalf("OpenStorage() = %T, %v; want nil and ErrInvalidArgument", store, err)
+					}
+
+					client, err := Open(ctx, tc.url)
+					if client != nil || !errors.Is(err, ErrInvalidArgument) {
+						t.Fatalf("Open() = %v, %v; want nil and ErrInvalidArgument", client, err)
+					}
+				}
+			})
+		}
+	})
+}
+
+func TestOpeningConsentContextPreservesParent(t *testing.T) {
+	type parentKey struct{}
+
+	parent, cancel := context.WithDeadline(context.WithValue(t.Context(), parentKey{}, "synthetic-value"), time.Now().Add(time.Hour))
+	t.Cleanup(cancel)
+
+	derived := WithAllowUnverifiedBackend(parent)
+	if parent.Value(allowUnverifiedBackendKey{}) != nil || t.Context().Value(allowUnverifiedBackendKey{}) != nil {
+		t.Fatal("consent mutated the parent or an unrelated context")
+	}
+
+	if enabled, _ := derived.Value(allowUnverifiedBackendKey{}).(bool); !enabled {
+		t.Fatal("derived context has no consent")
+	}
+
+	if got := derived.Value(parentKey{}); got != "synthetic-value" {
+		t.Fatalf("derived context value = %v, want parent value", got)
+	}
+
+	wantDeadline, _ := parent.Deadline()
+	if deadline, ok := derived.Deadline(); !ok || !deadline.Equal(wantDeadline) {
+		t.Fatal("derived context did not preserve the deadline")
+	}
+
+	cancel()
+
+	if !errors.Is(derived.Err(), context.Canceled) {
+		t.Fatalf("derived context error = %v, want context.Canceled", derived.Err())
+	}
+
+	select {
+	case <-derived.Done():
+	default:
+		t.Fatal("derived context did not preserve cancellation")
+	}
+}
+
+func TestAzureContainerFormUnverifiedPolicy(t *testing.T) {
+	t.Run("AC-3/classification", func(t *testing.T) {
+		for _, connection := range []string{"", "synthetic-invalid-connection-string"} {
+			t.Setenv("AZURE_STORAGE_CONNECTION_STRING", connection)
+			assertBackendClassification(t, "azblob://cnt/p", BackendUnverified)
+			assertBackendClassification(t, "azblob://acct.blob.core.windows.net/cnt/p", BackendVerified)
+		}
+	})
+}
+
+func TestUnverifiedBackendSentinel(t *testing.T) {
+	if got := ErrUnverifiedBackend.Error(); got != "ipam: unverified backend" {
+		t.Fatalf("sentinel text = %q", got)
+	}
+
+	err := fmt.Errorf("opening: %w", ErrUnverifiedBackend)
+	if !errors.Is(err, ErrUnverifiedBackend) {
+		t.Fatal("wrapped sentinel lost its identity")
+	}
+
+	for _, other := range []error{
+		ErrInvalidArgument, ErrConflict, storage.ErrNotFound, storage.ErrPreconditionFailed,
+		storage.ErrAccessDenied, storage.ErrUnknownOutcome,
+	} {
+		if errors.Is(err, other) {
+			t.Fatalf("sentinel unexpectedly matches %v", other)
+		}
 	}
 }

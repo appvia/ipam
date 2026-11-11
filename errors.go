@@ -20,6 +20,9 @@ var (
 	ErrInvalidCIDR = errors.New("ipam: invalid CIDR")
 	// ErrInvalidArgument identifies an invalid non-CIDR argument.
 	ErrInvalidArgument = errors.New("ipam: invalid argument")
+	// ErrUnverifiedBackend identifies a backend outside the verified support boundary.
+	// It is reserved for URL-opening enforcement; classification alone never returns it.
+	ErrUnverifiedBackend = errors.New("ipam: unverified backend")
 	// ErrUnsupportedSchema identifies an unknown on-disk schema version.
 	ErrUnsupportedSchema = errors.New("ipam: unsupported schema")
 )
