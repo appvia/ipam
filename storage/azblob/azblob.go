@@ -328,7 +328,7 @@ func (s *Store) upload(
 	}
 
 	if etag == nil {
-		return "", fmt.Errorf("azblob %s %q: response has no ETag", op, key)
+		return "", fmt.Errorf("azblob %s %q: %w: response has no ETag", op, key, storage.ErrUnknownOutcome)
 	}
 
 	return storage.Version(*etag), nil
