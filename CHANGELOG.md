@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Breaking change:** URL-based opening now refuses unverified custom endpoints
+  by default. Restore access with `--allow-unverified-backend`,
+  `IPAM_ALLOW_UNVERIFIED_BACKEND=true`, or library consent through
+  `WithAllowUnverifiedBackend` for `Open`/`OpenStorage`. These opt-ins express
+  consent only; they do not make an endpoint safe or verified. See
+  [Supported backends](https://github.com/appvia/ipam#supported-backends).
 - Caller-supplied pool and allocation metadata now has limits: descriptions
   must be valid UTF-8, at most 1024 bytes, with no Unicode control characters
   except tab and newline; at most 64 labels are allowed; label keys must be

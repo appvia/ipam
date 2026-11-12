@@ -49,7 +49,9 @@ type Config struct {
 	// Region is the bucket region. When empty it is taken from the SDK
 	// environment (AWS_REGION, shared config); it is never looked up via IMDS.
 	Region string
-	// Endpoint overrides the S3 endpoint, for S3-compatible servers.
+	// Endpoint overrides the S3 endpoint, for S3-compatible servers. See
+	// https://github.com/appvia/ipam#supported-backends for the URL-opening
+	// support classification; this setting does not attest to endpoint safety.
 	Endpoint string
 	// UsePathStyle selects path-style addressing (bucket in the path).
 	UsePathStyle bool
