@@ -245,11 +245,19 @@ func TestCLIExplicitFalseOverridesEnvironment(t *testing.T) {
 
 				res := h.run(map[string]string{"IPAM_BACKEND": testUnverifiedBackend, "IPAM_ALLOW_UNVERIFIED_BACKEND": value},
 					append(args, "--allow-unverified-backend=false")...)
-				if res.code != exitOK {
-					t.Fatalf("pre-enforcement command: %+v", res)
+				if command == "doctor" {
+					assertDoctorRows(t, res, "table", "fail", exitDoctorFailed,
+						doctorCheck{"backend-classification", "", statusFail, refusedClassificationDetail},
+						doctorCheck{"write-probe", "", statusWarn, probeSkipDetail})
+					assertOpeningConsent(t, h, true)
+				} else {
+					if res.code != exitOK {
+						t.Fatalf("pre-enforcement command: %+v", res)
+					}
+
+					assertOpeningConsent(t, h, false)
 				}
 
-				assertOpeningConsent(t, h, false)
 				assertSupportWarning(t, res, 0)
 			})
 		}
@@ -277,6 +285,11 @@ func TestCLIConsentDefaultsClosed(t *testing.T) {
 					if res.code != exitUsage || len(h.opened) != 0 || h.store.operations != 0 || strings.Contains(res.stderr, value) {
 						t.Fatalf("malformed consent: %+v", res)
 					}
+				} else if command == "doctor" {
+					assertDoctorRows(t, res, "table", "fail", exitDoctorFailed,
+						doctorCheck{"backend-classification", "", statusFail, refusedClassificationDetail},
+						doctorCheck{"write-probe", "", statusWarn, probeSkipDetail})
+					assertOpeningConsent(t, h, true)
 				} else {
 					if res.code != exitOK {
 						t.Fatalf("pre-enforcement command: %+v", res)
@@ -440,6 +453,8 @@ func (shortPolicyWriter) Write(p []byte) (int, error) {
 }
 
 func TestBackendPolicyDiagnosticsAreRedacted(t *testing.T) {
+	t.Run("doctor", testDoctorPolicyRedaction)
+
 	t.Run("AC-24/malformed flag", func(t *testing.T) {
 		h := newPolicyHarness(t)
 
