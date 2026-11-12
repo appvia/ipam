@@ -267,6 +267,47 @@ func TestGetReturnsDataAndETagVerbatim(t *testing.T) {
 	}
 }
 
+func TestUploadWithoutETagIsUnknownOutcome(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		run  func(*Store) error
+	}{
+		{
+			name: "CreateIfAbsent",
+			run: func(store *Store) error {
+				_, err := store.CreateIfAbsent(t.Context(), "k", []byte("x"))
+
+				return err
+			},
+		},
+		{
+			name: "PutIfMatch",
+			run: func(store *Store) error {
+				_, err := store.PutIfMatch(t.Context(), "k", []byte("x"), `"0x1"`)
+
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run("AC-55: "+tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store, _ := newTestStore(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusCreated)
+			})
+
+			err := tt.run(store)
+			if !errors.Is(err, storage.ErrUnknownOutcome) {
+				t.Fatalf("error = %v, want %v", err, storage.ErrUnknownOutcome)
+			}
+		})
+	}
+}
+
 func TestErrorMapping(t *testing.T) {
 	t.Parallel()
 
