@@ -99,7 +99,7 @@ This repository takes part in Appvia spec-driven agentic delivery. `appvia/agent
 
 1. Follow `.specify/memory/constitution.md`.
 2. Build exactly what the Story asks: every acceptance criterion, within every constraint, and nothing more.
-3. Prove each `AC-n` with a named test. A Bug fix starts with a failing regression test, committed alone as `test: reproduce AC-n` before the fix.
+3. Prove each `AC-n` with a named test. A Bug fix starts with a failing regression test, committed alone as `test: reproduce AC-n` before the fix. A Bug that cites a constitution rule (`.specify/memory/constitution.md#C-n.m`) instead commits `test: reproduce C-n.m` first, adding or tightening the automated check that proves the rule.
 4. Respect the Story's Constraints. If the Story is contradictory or can't be built as written, say so instead of improvising.
 5. End the PR description with a `## Final verification` section holding four unticked rows: F1 Story compliance, F2 Code quality, F3 Test evidence, F4 Spec fidelity. Under F1, map each AC to its code and tests and justify every changed file outside the Story's Hints. pr-verify reviews and ticks the rows.
 6. The gh-aw implement workflow opens the ready pull request or updates the existing one after review. Agents never write closing keywords; the workflow supplies the Story reference. Never merge, approve reviews or add `gate:*` labels.
