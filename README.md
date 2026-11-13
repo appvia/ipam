@@ -200,6 +200,9 @@ incarnations and the non-overlap invariant intact.
 The CLI (`--backend` or `IPAM_BACKEND`) and `ipam.Open`/`ipam.OpenStorage`
 take the same URLs:
 
+See [Supported backends](https://github.com/appvia/ipam#supported-backends) for
+the support boundary and consent required for unverified endpoints.
+
 | URL | Backend |
 | --- | --- |
 | `s3://<bucket>/<prefix>?region=..&endpoint=..&path_style=true` | Amazon S3 or an S3-compatible server. All query parameters are optional. |
@@ -231,6 +234,73 @@ never creates or deletes it.
 export IPAM_BACKEND='s3://acme-ipam/prod?region=eu-west-2'
 export IPAM_BACKEND='azblob://acmeipam.blob.core.windows.net/ipam'
 ```
+
+## Supported backends
+
+This is the support-policy classification for URL-based opening, not an
+attestation that an endpoint is reachable, authorised, authentic or enforces
+conditional writes. The classification is based on the selected backend and
+endpoint host; opting in never changes it. A successful classification or
+explicit consent does not prove an endpoint is safe.
+
+| URL selection | Classification |
+| --- | --- |
+| `s3://<bucket>/<prefix>` with no `endpoint=` override | **Verified**; the AWS SDK resolves its standard S3 endpoint. |
+| S3 with an endpoint hostname matching `*.amazonaws.com` or `*.amazonaws.com.cn` | **Verified** by hostname policy. |
+| `azblob://<account>.blob.core.windows.net/<container>/<prefix>` | **Verified** account-form Azure Blob. |
+| `file://` or `mem://` | **Verified**. |
+| S3 with any other endpoint hostname | **Unverified**. |
+| `azblob://<container>/<prefix>` | **Unverified** test-only container form for emulators. |
+
+The container-form Azure URL remains test-only: its connection-string and
+loopback-endpoint restrictions are unchanged. The account-form URL is the
+verified Azure form. Amazon S3 is the reference target and the only verified S3
+service; a matching AWS hostname is only a policy classification, not proof of
+endpoint authenticity, connectivity, authorization or conditional-write
+enforcement. When an S3 endpoint is omitted, normal AWS SDK endpoint resolution
+applies; this does not attest to its result.
+
+An unverified URL is refused for ordinary use unless the operator explicitly
+accepts the risk with `--allow-unverified-backend` or
+`IPAM_ALLOW_UNVERIFIED_BACKEND=true`. An explicitly supplied
+`--allow-unverified-backend=false` takes precedence over the environment and
+does not grant consent. Library callers can use `ClassifyBackend(rawURL)` to
+obtain the classification before opening. If their application has obtained
+informed consent, they can pass `WithAllowUnverifiedBackend` in a narrowly
+scoped context to either `Open` or `OpenStorage`. Choose one of these opening
+forms for the intended URL:
+
+```go
+store, err := ipam.OpenStorage(ipam.WithAllowUnverifiedBackend(ctx), rawURL)
+if err != nil {
+	return err
+}
+```
+
+```go
+client, err := ipam.Open(ipam.WithAllowUnverifiedBackend(ctx), rawURL)
+if err != nil {
+	return err
+}
+```
+
+Use the consent context only for the intended open. `Open` and `OpenStorage`
+retain the unverified classification after consent. Direct backend constructors
+and `New(store, ...)` are caller-managed and do not provide this URL-policy
+classification.
+
+Conditional creation must reject an existing object. Conditional replacement
+and deletion must reject a version mismatch. If a backend ignores these
+conditions, concurrent writers can corrupt pool and reservation documents.
+Operators are responsible for evaluating the endpoint before accepting this
+risk. Before accepting another service, run the full storage contract suite
+against it, including conditional deletion; an emulator run that skips
+conditional deletion does not qualify the service for verified support.
+
+Doctor cannot prove conditional deletion because doing so would delete data.
+Its existing write probe tests conditional replacement only and can change data
+on a non-enforcing backend, so a successful probe is not proof of the full
+storage contract.
 
 ## CLI
 
