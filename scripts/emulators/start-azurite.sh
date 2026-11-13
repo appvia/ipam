@@ -27,7 +27,7 @@ data_dir="$(mktemp -d "$tmp_root/ipam-azurite.XXXXXX")"
 # set -m gives the launch its own process group, which stop.sh relies on.
 set -m
 nohup npx --yes --package "azurite@$version" azurite-blob \
-	--silent --skipApiVersionCheck \
+	--silent --skipApiVersionCheck --disableTelemetry \
 	--location "$data_dir" \
 	--blobHost 127.0.0.1 --blobPort "$port" \
 	</dev/null >"$logfile" 2>&1 &
