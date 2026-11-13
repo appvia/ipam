@@ -2,7 +2,7 @@
 
 > **DRAFT** - not yet ratified. The platform team owns this file. Changes land through a pull request to `appvia/agentic-delivery` and reach product repos through repo-sync.
 
-**Version**: 0.2.0-draft | **Ratified**: pending | **Last amended**: 2026-11-05
+**Version**: 0.3.0-draft | **Ratified**: pending | **Last amended**: 2026-11-12
 
 This constitution sets the non-negotiables for every Requirement, spec, plan and Story delivered through the spec-driven pipeline. Agents and humans read it before writing a brief, spec, design or Story. A design that breaks a rule here must say so in its Constitution Check and get the gate approver's explicit sign-off.
 
@@ -29,7 +29,9 @@ This constitution sets the non-negotiables for every Requirement, spec, plan and
 
 - Any language, framework or platform may be used.
 - The product's stack is chosen in the design stage and recorded, with the reason, in an ADR under the spec (`specs/<REQ>/decisions/`). It is approved at G3 with the design.
-- Every stack must have, in the repo: an exact-pinned toolchain (for example `mise.toml`, `.nvmrc` or `.terraform-version`), a lockfile where the ecosystem has one, and CI that builds, tests and lints on every pull request. The pipeline's pr-verify and F4 checks read those CI results.
+- Every language, SDK and tool the repo uses (compilers, runtimes, linters, formatters, generators, CLIs) is declared in `mise.toml` with an exact version and locked in a committed `mise.lock` for every CI platform. Tools come from mise backends that verify downloads; the `asdf` and `vfox` plugin backends are not used.
+- CI installs those tools only through mise from `mise.toml` and `mise.lock` in locked mode (for example `jdx/mise-action` with `MISE_LOCKED=1`), and pins no tool version anywhere else; a lint or setup action uses the binary mise installed. CI builds, tests and lints on every pull request. The pipeline's pr-verify and F4 checks read those CI results.
+- Language package dependencies keep their ecosystem lockfile (`go.sum`, `package-lock.json`, `.terraform.lock.hcl`). Anything mise cannot install is an exception recorded in the design's Constitution Check and approved at G3.
 - When an org skill exists for the stack (for example `typescript-node` or `terraform-module`), the design names it. When none exists, the design states the build, test and lint commands explicitly, and a new skill can be proposed to `appvia/agent-skills`.
 - Infrastructure as code is never applied by agents.
 

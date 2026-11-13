@@ -50,11 +50,6 @@ body:
       description: "Likely files and modules, related ADRs."
     validations:
       required: false
-  - type: textarea
-    id: depends-on
+  - type: markdown
     attributes:
-      label: Depends on
-      description: "Issues that must be done first, or \"None\"."
-      placeholder: "#123, #124"
-    validations:
-      required: true
+      value: "Dependencies: use the issue's Blocked by sidebar, not the body. The build waits until every blocker is closed as completed."

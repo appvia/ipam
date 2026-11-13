@@ -31,7 +31,7 @@
   Each Story and Enabler key feeds one section of the Story issue:
   spec_path and acceptance ids -> Spec, what_to_build -> What to build,
   acceptance -> Acceptance criteria, constraints -> Constraints,
-  test_expectations -> Test expectations, hints -> Hints, depends_on -> Depends on.
+  test_expectations -> Test expectations, hints -> Hints, depends_on -> GitHub Blocked by links (not a body section).
   Replace the example blocks below; keep the shape.
 -->
 
