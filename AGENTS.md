@@ -89,8 +89,8 @@ This repository takes part in Appvia spec-driven agentic delivery. `appvia/agent
 ## How work arrives
 
 - Requirements become specs under `specs/` (in this repo or the product's spec repo). Specs are sliced into Story, Enabler and Bug issues in the repo that changes.
-- Each Story has seven sections: Spec, What to build, Acceptance criteria, Constraints, Test expectations, Hints, Depends on. Those sections are the whole build contract.
-- A delivery engineer applies `gate:ready` (G4) to a Story, Enabler or Bug once it is `stage:ready`. The build starts straight away. It's refused if the issue carries `needs:split`, `needs:human` or `needs:clarification`, its Project Size is L or XL, it fails Story lint, or its Project Agent is unset.
+- Each Story has six sections: Spec, What to build, Acceptance criteria, Constraints, Test expectations, Hints. Those sections are the whole build contract. Dependencies are GitHub Blocked by links on the issue.
+- A delivery engineer applies `gate:ready` (G4) to a Story, Enabler or Bug once it is `stage:ready`. The build starts straight away unless a Blocked by issue is still open; then the router comments and waits, and builds once every blocker is closed as completed. A blocker closed as not planned or duplicate is refused with `needs:human`. It's refused if the issue carries `needs:split`, `needs:human` or `needs:clarification`, its Project Size is L or XL, it fails Story lint, or its Project Agent is unset.
 - The Project's **Agent** field picks the build agent: `implementer-low` for small work confined to one module, `implementer-high` for everything else. Slicing sets it through materialise, from `executor:` in `tasks.md`. When it's unset, readiness-check or a delivery engineer sets it.
 - Stories larger than M are refused with `needs:split`. A delivery engineer can apply `agent:split` to a Story or Enabler with `needs:split` and Size L or XL, and the control plane replaces it with 2 to 6 siblings of size M or smaller and closes it as not planned. Or split it by hand. Bugs are never split.
 - One Story is one agent session and one pull request.
