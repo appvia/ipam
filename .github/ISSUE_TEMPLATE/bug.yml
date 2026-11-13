@@ -1,16 +1,16 @@
 name: Bug
-description: A defect against an accepted spec. The fix starts with a failing regression test for the violated acceptance criterion.
+description: A defect against an accepted spec or a broken constitution rule. The fix starts with a failing regression test for the violated acceptance criterion or rule.
 title: "[Bug] "
 type: Bug
 body:
   - type: markdown
     attributes:
-      value: "A Bug must cite the acceptance criterion it violates. If no AC covers the behaviour, it is a spec gap, so raise a Requirement instead. Do not include real data, client identifiers or credentials."
+      value: "A Bug must cite the acceptance criterion it violates, or the constitution rule it breaks. If neither covers the problem, it is a spec gap, so raise a Requirement instead. Do not include real data, client identifiers or credentials."
   - type: input
     id: spec
     attributes:
       label: Spec
-      description: "The violated acceptance criterion as specs/<REQ-folder>/spec.md#AC-n."
+      description: "Write exactly one of these two forms, as a plain path from the repository root (not a link or URL): specs/<REQ-folder>/spec.md#AC-n for a violated acceptance criterion, or .specify/memory/constitution.md#C-n.m for a broken constitution rule (for example .specify/memory/constitution.md#C-III.4)."
       placeholder: "specs/REQ-000042-tenant-self-service/spec.md#AC-3"
     validations:
       required: true
