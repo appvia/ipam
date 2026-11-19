@@ -29,6 +29,15 @@
 
 - [What this Requirement will not deliver]
 
-## Open questions
+## Assumptions *(mandatory; may be empty)*
 
-- [NEEDS CLARIFICATION: question for the requester]
+<!--
+  Informed-guess rule: when a detail is missing but has a reasonable default, record it here
+  as an assumption instead of asking. Merging the PR confirms every assumption.
+-->
+
+- **ASM-1**: [assumed answer] - [reason] (confirm in review)
+
+## Open questions *(blockers only, at most 3)*
+
+- [NEEDS CLARIFICATION: question - Recommended: answer - reason]

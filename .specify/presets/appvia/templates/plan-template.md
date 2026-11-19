@@ -63,3 +63,5 @@ See `data-model.md`.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | [risk] | [low/medium/high] | [low/medium/high] | [mitigation] |
+
+Design assumptions (`ASM-n`) live in `research.md`; spec edits made during design are listed under `## Spec delta` in the PR body.

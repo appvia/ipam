@@ -50,6 +50,15 @@
 
 - [What this spec will not deliver]
 
-## Open questions *(mandatory, empty before G2)*
+## Assumptions *(mandatory; may be empty)*
 
-- [NEEDS CLARIFICATION: question, and who must answer it]
+<!--
+  Informed-guess rule: when a detail is missing but has a reasonable default, record it here
+  as an assumption instead of asking. Merging the PR confirms every assumption.
+-->
+
+- **ASM-1**: [assumed answer] - [reason] (confirm in review)
+
+## Open questions *(blockers only, at most 3; empty before G2)*
+
+- [NEEDS CLARIFICATION: question - Recommended: answer - reason]

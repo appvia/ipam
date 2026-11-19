@@ -3,11 +3,11 @@
 Files under `references/vendor/` are copied unchanged from GitHub Spec Kit.
 
 - Upstream: https://github.com/github/spec-kit
-- Release: v1.2.5
-- Commit SHA: 4572a67fe0e72a6837e2d7bb0fda875bc41482e5 (tag object 79b6a2ae7c7f630edd4ecd93377d0308e754e456)
+- Release: v1.3.2
+- Commit SHA: 55264c2f2f2d1146f02abc543cb913dcdf1f9342 (tag object bd4bd60aa94b1b867afba76c36e311990d9ea591)
 - Licence: MIT
 - How they were made:
-  `uvx --from git+https://github.com/github/spec-kit.git@v1.2.5 specify init demo --integration claude --script sh --ignore-agent-tools`,
-  then `.claude/skills/speckit-<step>/SKILL.md` was copied to `references/vendor/speckit-<step>.md` for specify, clarify, plan and tasks.
+  `uvx --from git+https://github.com/github/spec-kit.git@v1.3.2 specify init demo --integration claude --script sh --ignore-agent-tools --non-interactive`,
+  then `.claude/skills/speckit-<step>/SKILL.md` was copied to `references/vendor/speckit-<step>.md` for specify, clarify, plan, tasks and analyze.
 
 The files are renamed from `SKILL.md` so that they aren't installed as separate skills. To update, re-run the command at a new tag, copy again, and update this file.
