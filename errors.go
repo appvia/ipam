@@ -5,6 +5,7 @@ package ipam
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -21,11 +22,20 @@ var (
 	// ErrInvalidArgument identifies an invalid non-CIDR argument.
 	ErrInvalidArgument = errors.New("ipam: invalid argument")
 	// ErrUnverifiedBackend identifies a backend outside the verified support boundary.
-	// It is reserved for URL-opening enforcement; classification alone never returns it.
+	// Classification alone never returns it.
 	ErrUnverifiedBackend = errors.New("ipam: unverified backend")
 	// ErrUnsupportedSchema identifies an unknown on-disk schema version.
 	ErrUnsupportedSchema = errors.New("ipam: unsupported schema")
 )
+
+func unverifiedBackendError() error {
+	return fmt.Errorf("%w: conditional creation, replacement and deletion must be enforced "+
+		"(S3: PutObject If-None-Match: * for creation and If-Match: <etag> for replacement; "+
+		"DeleteObject If-Match: <etag> for deletion). Enforcement cannot be checked by opening; "+
+		"ignoring these conditions risks concurrent corruption. Library consent: WithAllowUnverifiedBackend. "+
+		"CLI consent: --allow-unverified-backend or IPAM_ALLOW_UNVERIFIED_BACKEND=true. "+
+		"See https://github.com/appvia/ipam#supported-backends", ErrUnverifiedBackend)
+}
 
 // OpError adds operation and resource context while preserving error identity.
 type OpError struct {

@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -305,7 +306,7 @@ func TestOpenS3BuildsStoreWithoutRequests(t *testing.T) {
 
 	raw := "s3://bkt/p?region=eu-west-1&path_style=true&endpoint=" + url.QueryEscape(srv.URL)
 
-	store, err := OpenStorage(t.Context(), raw)
+	store, err := OpenStorage(WithAllowUnverifiedBackend(t.Context()), raw)
 	if err != nil {
 		t.Fatalf("OpenStorage() error = %v", err)
 	}
@@ -317,6 +318,148 @@ func TestOpenS3BuildsStoreWithoutRequests(t *testing.T) {
 	if n := requests.Load(); n != 0 {
 		t.Fatalf("construction made %d requests, want 0", n)
 	}
+}
+
+func TestOpenRefusesUnverifiedBackend(t *testing.T) {
+	t.Run("AC-5", func(t *testing.T) {
+		isolateEnv(t)
+
+		for _, raw := range []string{
+			"s3://fictional-bucket/private-prefix?endpoint=https://store.example.test",
+			"azblob://fictional-container/private-prefix",
+		} {
+			t.Run(raw, func(t *testing.T) {
+				store, err := OpenStorage(t.Context(), raw)
+				if store != nil || !errors.Is(err, ErrUnverifiedBackend) {
+					t.Fatalf("OpenStorage() = %T, %v; want nil and ErrUnverifiedBackend", store, err)
+				}
+
+				client, err := Open(t.Context(), raw)
+				if client != nil || !errors.Is(err, ErrUnverifiedBackend) {
+					t.Fatalf("Open() = %v, %v; want nil and ErrUnverifiedBackend", client, err)
+				}
+
+				for _, other := range []error{
+					ErrInvalidArgument, ErrConflict, storage.ErrNotFound,
+					storage.ErrPreconditionFailed, storage.ErrAccessDenied, storage.ErrUnknownOutcome,
+				} {
+					if errors.Is(err, other) {
+						t.Fatalf("unverified refusal unexpectedly matches %v", other)
+					}
+				}
+
+				for _, marker := range []string{"fictional-bucket", "fictional-container", "private-prefix", "store.example.test"} {
+					if strings.Contains(err.Error(), marker) {
+						t.Fatalf("refusal disclosed %q: %v", marker, err)
+					}
+				}
+
+				for _, text := range []string{
+					"conditional creation", "replacement", "deletion", "WithAllowUnverifiedBackend",
+					"--allow-unverified-backend", "IPAM_ALLOW_UNVERIFIED_BACKEND=true",
+					"https://github.com/appvia/ipam#supported-backends",
+				} {
+					if !strings.Contains(err.Error(), text) {
+						t.Errorf("refusal missing %q: %v", text, err)
+					}
+				}
+			})
+		}
+	})
+}
+
+func TestOpenAllowsExplicitUnverifiedConsent(t *testing.T) {
+	t.Run("AC-7", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AWS_ACCESS_KEY_ID", "dummy-access-key")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "dummy-secret-key")
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+		t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "absent"))
+		t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "absent"))
+
+		var requests atomic.Int64
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+
+		s3URL := "s3://fictional-bucket/private-prefix?region=eu-west-1&endpoint=" + url.QueryEscape(srv.URL)
+		ctx := WithAllowUnverifiedBackend(t.Context())
+
+		for _, raw := range []string{s3URL, "azblob://fictional-container/private-prefix"} {
+			if strings.HasPrefix(raw, "azblob:") {
+				t.Setenv("AZURE_STORAGE_CONNECTION_STRING",
+					"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey="+azuriteKey+
+						";BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;")
+			}
+
+			classification, err := ClassifyBackend(raw)
+			if err != nil || classification != BackendUnverified {
+				t.Fatalf("ClassifyBackend() = %q, %v; want unverified", classification, err)
+			}
+
+			store, err := OpenStorage(ctx, raw)
+			if err != nil || store == nil {
+				t.Fatalf("OpenStorage() = %T, %v; want a usable store", store, err)
+			}
+
+			client, err := Open(ctx, raw)
+			if err != nil || client == nil {
+				t.Fatalf("Open() = %v, %v; want a usable client", client, err)
+			}
+
+			classification, err = ClassifyBackend(raw)
+			if err != nil || classification != BackendUnverified {
+				t.Fatalf("consent changed classification to %q, %v", classification, err)
+			}
+		}
+
+		if got := requests.Load(); got != 0 {
+			t.Fatalf("opening made %d requests, want 0", got)
+		}
+	})
+}
+
+func TestOpenOptionsAppliedOnce(t *testing.T) {
+	t.Run("consent preserves client configuration", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AWS_ACCESS_KEY_ID", "dummy-access-key")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "dummy-secret-key")
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+		t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "absent"))
+		t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "absent"))
+
+		calls := 0
+		option := func(client *Client) {
+			calls++
+
+			client.maxAttempts = 3
+			client.backoffBase = time.Second
+			client.backoffCap = 2 * time.Second
+			client.clock = func() time.Time { return time.Unix(1, 0) }
+			client.random = strings.NewReader("synthetic-random")
+			client.sleeper = func(context.Context, time.Duration) error { return nil }
+			client.idGenerator = func() string { return "synthetic-id" }
+		}
+
+		client, err := Open(WithAllowUnverifiedBackend(t.Context()),
+			"s3://fictional-bucket/private-prefix?region=eu-west-1&endpoint=https://store.example.test",
+			option, nil)
+		if err != nil || client == nil {
+			t.Fatalf("Open() = %v, %v; want a client", client, err)
+		}
+
+		if calls != 1 {
+			t.Fatalf("option calls = %d, want 1", calls)
+		}
+
+		if client.maxAttempts != 3 || client.backoffBase != time.Second || client.backoffCap != 2*time.Second ||
+			client.clock() != time.Unix(1, 0) || client.idGenerator() != "synthetic-id" {
+			t.Fatal("Open did not retain the applied client options")
+		}
+	})
 }
 
 func TestOpenAzureAccountFormBuildsWithoutNetwork(t *testing.T) {
@@ -350,7 +493,7 @@ func TestOpenAzureContainerFormAcceptsLoopbackEmulator(t *testing.T) {
 		"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey="+azuriteKey+
 			";BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;")
 
-	store, err := OpenStorage(t.Context(), "azblob://cnt/p")
+	store, err := OpenStorage(WithAllowUnverifiedBackend(t.Context()), "azblob://cnt/p")
 	if err != nil {
 		t.Fatalf("OpenStorage() error = %v", err)
 	}
@@ -365,7 +508,7 @@ func TestOpenAzureContainerFormRejectsNonLoopbackConnectionString(t *testing.T) 
 	t.Setenv("AZURE_STORAGE_CONNECTION_STRING",
 		"DefaultEndpointsProtocol=https;AccountName=prodacct;AccountKey="+azuriteKey+";EndpointSuffix=core.windows.net")
 
-	_, err := OpenStorage(t.Context(), "azblob://cnt/p")
+	_, err := OpenStorage(WithAllowUnverifiedBackend(t.Context()), "azblob://cnt/p")
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("OpenStorage() error = %v, want ErrInvalidArgument", err)
 	}
@@ -486,7 +629,7 @@ func TestOpenS3IPStyleBucketIsRejectedByParser(t *testing.T) {
 func TestOpenAzureContainerFormWithoutConnectionStringIsRejected(t *testing.T) {
 	isolateEnv(t)
 
-	_, err := OpenStorage(t.Context(), "azblob://cnt/p")
+	_, err := OpenStorage(WithAllowUnverifiedBackend(t.Context()), "azblob://cnt/p")
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("OpenStorage() error = %v, want ErrInvalidArgument", err)
 	}
@@ -536,6 +679,12 @@ func assertBackendClassification(t *testing.T, raw string, want BackendClassific
 
 func TestBackendClassificationDefaultS3(t *testing.T) {
 	t.Run("AC-1", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AWS_REGION", "eu-west-1")
+		t.Setenv("AWS_ACCESS_KEY_ID", "dummy-access-key")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "dummy-secret-key")
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
 		if BackendVerified != "verified" || BackendUnverified != "unverified" {
 			t.Fatal("classification values do not match the public contract")
 		}
@@ -544,12 +693,32 @@ func TestBackendClassificationDefaultS3(t *testing.T) {
 			"s3://bkt", "s3://bkt/p", "s3://bkt/p?region=eu-west-1&path_style=true",
 		} {
 			assertBackendClassification(t, raw, BackendVerified)
+
+			store, err := OpenStorage(t.Context(), raw)
+			if err != nil || store == nil {
+				t.Fatalf("OpenStorage(%q) = %T, %v", raw, store, err)
+			}
+
+			client, err := Open(t.Context(), raw)
+			if err != nil || client == nil {
+				t.Fatalf("Open(%q) = %v, %v", raw, client, err)
+			}
+
+			if err := client.Close(); err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 }
 
 func TestBackendClassificationAWSSuffixes(t *testing.T) {
 	t.Run("AC-2", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AWS_REGION", "eu-west-1")
+		t.Setenv("AWS_ACCESS_KEY_ID", "dummy-access-key")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "dummy-secret-key")
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
 		for _, endpoint := range []string{
 			"https://s3.eu-west-1.amazonaws.com",
 			"https://s3.cn-north-1.amazonaws.com.cn",
@@ -557,7 +726,17 @@ func TestBackendClassificationAWSSuffixes(t *testing.T) {
 			"http://S3.CN-NORTH-1.AMAZONAWS.COM.CN:9000/path",
 		} {
 			t.Run(endpoint, func(t *testing.T) {
-				assertBackendClassification(t, "s3://bkt/p?endpoint="+url.QueryEscape(endpoint), BackendVerified)
+				raw := "s3://bkt/p?endpoint=" + url.QueryEscape(endpoint)
+				assertBackendClassification(t, raw, BackendVerified)
+
+				if store, err := OpenStorage(t.Context(), raw); err != nil || store == nil {
+					t.Fatalf("OpenStorage() = %T, %v; want verified construction", store, err)
+				}
+
+				client, err := Open(t.Context(), raw)
+				if err != nil || client == nil {
+					t.Fatalf("Open() = %v, %v; want verified construction", client, err)
+				}
 			})
 		}
 	})
@@ -640,6 +819,129 @@ func TestClassificationAndOpenHaveNoIO(t *testing.T) {
 
 		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("classification created a local store: stat error = %v", err)
+		}
+	})
+
+	t.Run("AC-17/opening", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AWS_REGION", "eu-west-1")
+		t.Setenv("AWS_ACCESS_KEY_ID", "dummy-access-key")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "dummy-secret-key")
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+		t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "absent"))
+		t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "absent"))
+		t.Setenv("ARM_USE_CLI", "false")
+		t.Setenv("ARM_USE_MSI", "true")
+		t.Setenv("AZURE_STORAGE_CONNECTION_STRING",
+			"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey="+azuriteKey+
+				";BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;")
+
+		var requests atomic.Int64
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+
+		cases := []struct {
+			name string
+			raw  string
+			want BackendClassification
+		}{
+			{"memory", "mem://", BackendVerified},
+			{"file", fileURL(filepath.Join(t.TempDir(), "store")), BackendVerified},
+			{"default S3", "s3://fictional-bucket", BackendVerified},
+			{"AWS S3", "s3://fictional-bucket?endpoint=https://s3.eu-west-1.amazonaws.com", BackendVerified},
+			{"AWS China S3", "s3://fictional-bucket?endpoint=https://s3.cn-north-1.amazonaws.com.cn", BackendVerified},
+			{"account Azure", "azblob://fictional.blob.core.windows.net/container", BackendVerified},
+			{"custom S3", "s3://fictional-bucket?endpoint=" + url.QueryEscape(srv.URL), BackendUnverified},
+			{"container Azure", "azblob://fictional-container/prefix", BackendUnverified},
+		}
+
+		for _, tc := range cases {
+			for _, consent := range []bool{false, true} {
+				for _, opener := range []string{"OpenStorage", "Open"} {
+					t.Run(fmt.Sprintf("%s/%s/consent=%v", tc.name, opener, consent), func(t *testing.T) {
+						ctx := t.Context()
+						if consent {
+							ctx = WithAllowUnverifiedBackend(ctx)
+						}
+
+						var (
+							closer    io.Closer
+							nilHandle bool
+							err       error
+						)
+
+						if opener == "OpenStorage" {
+							store, openErr := OpenStorage(ctx, tc.raw)
+							err = openErr
+							nilHandle = store == nil
+							closer, _ = store.(io.Closer)
+						} else {
+							client, openErr := Open(ctx, tc.raw)
+							err = openErr
+							nilHandle = client == nil
+							closer = client
+						}
+
+						if tc.want == BackendUnverified && !consent {
+							if !nilHandle || !errors.Is(err, ErrUnverifiedBackend) {
+								t.Fatalf("%s() returned nil handle %v, %v; want refusal", opener, nilHandle, err)
+							}
+
+							return
+						}
+
+						if err != nil || nilHandle {
+							t.Fatalf("%s() returned nil handle %v, %v; want successful construction", opener, nilHandle, err)
+						}
+
+						if closer != nil {
+							if err := closer.Close(); err != nil {
+								t.Fatal(err)
+							}
+						}
+					})
+				}
+			}
+		}
+
+		if got := requests.Load(); got != 0 {
+			t.Fatalf("opening made %d network requests, want 0", got)
+		}
+	})
+}
+
+func TestVerifiedBackendErrorsPreserved(t *testing.T) {
+	t.Run("AC-27/constructor causes", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+		t.Setenv("ARM_USE_CLI", "false")
+
+		store, err := OpenStorage(t.Context(), "s3://fictional-bucket")
+		if store != nil || !errors.Is(err, ErrInvalidArgument) || errors.Is(err, ErrUnverifiedBackend) ||
+			!strings.Contains(err.Error(), "region is required") {
+			t.Fatalf("verified S3 constructor error changed: %T, %v", store, err)
+		}
+
+		store, err = OpenStorage(t.Context(), "azblob://fictional.blob.core.windows.net/container")
+		if store != nil || !errors.Is(err, ErrInvalidArgument) || errors.Is(err, ErrUnverifiedBackend) ||
+			!strings.Contains(err.Error(), "Azure authentication") {
+			t.Fatalf("verified Azure constructor error changed: %T, %v", store, err)
+		}
+	})
+
+	t.Run("AC-27/operation cause", func(t *testing.T) {
+		client, err := Open(t.Context(), "mem://")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = client.GetPool(t.Context(), "fictional-pool")
+		if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnverifiedBackend) {
+			t.Fatalf("verified operation error changed: %v", err)
 		}
 	})
 }
@@ -739,23 +1041,36 @@ func TestClassificationNeverLearnsOrPromotes(t *testing.T) {
 		t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "absent"))
 
 		raw := "s3://bkt/p?region=eu-west-1&path_style=true&endpoint=" + url.QueryEscape(srv.URL)
-		for _, ctx := range []context.Context{t.Context(), WithAllowUnverifiedBackend(t.Context()), t.Context()} {
+		for _, tc := range []struct {
+			ctx     context.Context
+			allowed bool
+		}{{t.Context(), false}, {WithAllowUnverifiedBackend(t.Context()), true}, {t.Context(), false}} {
 			assertBackendClassification(t, raw, BackendUnverified)
 
-			store, err := OpenStorage(ctx, raw)
+			store, err := OpenStorage(tc.ctx, raw)
+			if !tc.allowed {
+				if store != nil || !errors.Is(err, ErrUnverifiedBackend) {
+					t.Fatalf("OpenStorage() = %T, %v; want refusal before construction", store, err)
+				}
+
+				assertBackendClassification(t, raw, BackendUnverified)
+
+				continue
+			}
+
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if _, err := store.CreateIfAbsent(ctx, "synthetic.json", []byte(`{}`)); err != nil {
+			if _, err := store.CreateIfAbsent(tc.ctx, "synthetic.json", []byte(`{}`)); err != nil {
 				t.Fatal(err)
 			}
 
 			assertBackendClassification(t, raw, BackendUnverified)
 		}
 
-		if got := requests.Load(); got != 3 {
-			t.Fatalf("successful storage uses = %d, want 3", got)
+		if got := requests.Load(); got != 1 {
+			t.Fatalf("successful storage uses = %d, want 1", got)
 		}
 	})
 }

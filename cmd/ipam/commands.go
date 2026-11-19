@@ -142,7 +142,7 @@ func (c *cli) backendURL() (string, error) {
 	return backend, nil
 }
 
-func (c *cli) prepareBackend(cmd *cobra.Command) (backendSelection, error) {
+func (c *cli) selectBackend(cmd *cobra.Command) (backendSelection, error) {
 	backend, err := c.backendURL()
 	if err != nil {
 		return backendSelection{}, err
@@ -163,13 +163,46 @@ func (c *cli) prepareBackend(cmd *cobra.Command) (backendSelection, error) {
 		}
 	}
 
-	if classification == ipam.BackendUnverified && allow {
+	return backendSelection{url: backend, classification: classification, allowUnverified: allow}, nil
+}
+
+func (c *cli) prepareBackend(cmd *cobra.Command) (backendSelection, error) {
+	backend, err := c.selectBackend(cmd)
+	if err != nil {
+		return backendSelection{}, err
+	}
+
+	if backend.classification == ipam.BackendUnverified {
+		if !backend.allowUnverified {
+			return backendSelection{}, fmt.Errorf("%w: conditional creation, replacement and deletion must be enforced "+
+				"(S3: PutObject If-None-Match: * for creation and If-Match: <etag> for replacement; "+
+				"DeleteObject If-Match: <etag> for deletion). Enforcement cannot be checked by opening; "+
+				"ignoring these conditions risks concurrent corruption. Library consent: WithAllowUnverifiedBackend. "+
+				"CLI consent: --allow-unverified-backend or IPAM_ALLOW_UNVERIFIED_BACKEND=true. "+
+				"See https://github.com/appvia/ipam#supported-backends", ipam.ErrUnverifiedBackend)
+		}
+
 		if err := c.warnUnverified(cmd.ErrOrStderr()); err != nil {
 			return backendSelection{}, err
 		}
 	}
 
-	return backendSelection{url: backend, classification: classification, allowUnverified: allow}, nil
+	return backend, nil
+}
+
+func (c *cli) prepareDoctorBackend(cmd *cobra.Command) (backendSelection, error) {
+	backend, err := c.selectBackend(cmd)
+	if err != nil {
+		return backendSelection{}, err
+	}
+
+	if backend.classification == ipam.BackendUnverified && backend.allowUnverified {
+		if err := c.warnUnverified(cmd.ErrOrStderr()); err != nil {
+			return backendSelection{}, err
+		}
+	}
+
+	return backend, nil
 }
 
 func (c *cli) client(cmd *cobra.Command) (*ipam.Client, error) {

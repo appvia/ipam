@@ -56,7 +56,7 @@ func TestOpErrorDoesNotRepeatPool(t *testing.T) {
 func TestOpenStorageAzblobErrorIsNotDoubled(t *testing.T) {
 	t.Setenv("AZURE_STORAGE_CONNECTION_STRING", "")
 
-	_, err := OpenStorage(t.Context(), "azblob://mycontainer/prefix")
+	_, err := OpenStorage(WithAllowUnverifiedBackend(t.Context()), "azblob://mycontainer/prefix")
 	if err == nil {
 		t.Fatal("OpenStorage succeeded without a credential")
 	}
