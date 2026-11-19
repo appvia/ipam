@@ -1,6 +1,9 @@
 # Copyright 2026 Appvia Ltd.
 # SPDX-License-Identifier: Apache-2.0
 
+[settings]
+lockfile_platforms = ["linux-x64", "linux-arm64", "macos-arm64", "macos-x64", "windows-x64"]
+
 [tools]
 go = "1.27.3"
 "go:github.com/minio/minio" = "0.0.0-20260212201848-7aac2a2c5b7c"

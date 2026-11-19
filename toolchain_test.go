@@ -81,7 +81,7 @@ func TestConstitutionCIII4Toolchain(t *testing.T) {
 				continue
 			}
 
-			for _, platform := range []string{"linux-x64", "macos-arm64", "macos-x64", "windows-x64"} {
+			for _, platform := range []string{"linux-x64", "linux-arm64", "macos-arm64", "macos-x64", "windows-x64"} {
 				_, artifact, found := strings.Cut(entry, `"platforms.`+platform+`"]`)
 
 				artifact, _, _ = strings.Cut(artifact, "\n[tools.")
