@@ -4,7 +4,9 @@
 package ipam
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -14,9 +16,16 @@ func TestConstitutionCIII4Toolchain(t *testing.T) {
 	t.Run("C-III.4: exact tools locked for every CI platform", func(t *testing.T) {
 		manifest := readToolchainFile(t, "mise.toml")
 		lock := readToolchainFile(t, "mise.lock")
+
 		pins := regexp.MustCompile(`(?m)^([a-z][a-z0-9-]*|"[^"]+") = "([^"\n]+)"$`).FindAllStringSubmatch(manifest, -1)
 		if len(pins) == 0 {
 			t.Fatal("mise.toml must declare exact tool versions")
+		}
+
+		for _, tool := range []string{"go", "golangci-lint", "goreleaser", "jq", "node", `"npm:azurite"`, `"go:github.com/minio/minio"`} {
+			if !strings.Contains(manifest, "\n"+tool+" = ") {
+				t.Errorf("mise.toml must declare the CI tool %s", tool)
+			}
 		}
 
 		for _, pin := range pins {
@@ -41,8 +50,42 @@ func TestConstitutionCIII4Toolchain(t *testing.T) {
 				t.Errorf("mise.lock does not match %s's exact pin", tool)
 			}
 
-			for _, platform := range []string{"linux-x64", "macos-arm64", "windows-x64"} {
-				if !strings.Contains(entry, "[tools.") || !strings.Contains(entry, ".platforms."+platform+"]") {
+			if strings.HasPrefix(tool, "go:") {
+				if !strings.Contains(entry, `backend = "`+tool+`"`) {
+					t.Errorf("%s must use the checksum-verifying Go module backend", tool)
+				}
+
+				continue
+			}
+
+			if pkgName, ok := strings.CutPrefix(tool, "npm:"); ok {
+				sidecar := filepath.Join(".mise", "locks", "npm-"+pkgName, pin[2])
+				if !strings.Contains(entry, `path = "`+filepath.ToSlash(sidecar)+`"`) || !strings.Contains(entry, `digest = "sha256:`) {
+					t.Errorf("%s must lock its dependency graph with a content digest", tool)
+				}
+
+				var pkg struct {
+					Dependencies map[string]string `json:"dependencies"`
+				}
+
+				if err := json.Unmarshal([]byte(readToolchainFile(t, filepath.Join(sidecar, "package.json"))), &pkg); err != nil {
+					t.Fatal(err)
+				}
+
+				if pkg.Dependencies[pkgName] != pin[2] {
+					t.Errorf("%s sidecar must match the mise pin", tool)
+				}
+
+				readToolchainFile(t, filepath.Join(sidecar, "aube-lock.yaml"))
+
+				continue
+			}
+
+			for _, platform := range []string{"linux-x64", "macos-arm64", "macos-x64", "windows-x64"} {
+				_, artifact, found := strings.Cut(entry, `"platforms.`+platform+`"]`)
+
+				artifact, _, _ = strings.Cut(artifact, "\n[tools.")
+				if !found || !strings.Contains(artifact, `checksum = "sha256:`) || !strings.Contains(artifact, `url = "https://`) {
 					t.Errorf("%s is not locked for CI platform %s", tool, platform)
 				}
 			}
@@ -64,14 +107,32 @@ func TestConstitutionCIII4Toolchain(t *testing.T) {
 				}
 			}
 
-			jobs := regexp.MustCompile(`(?m)^    runs-on:`).FindAllStringIndex(workflow, -1)
-			setups := regexp.MustCompile(`jdx/mise-action@[0-9a-f]{40} # v[0-9.]+`).FindAllStringIndex(workflow, -1)
-			if len(jobs) == 0 || len(setups) != len(jobs) {
-				t.Errorf("%s: every build job needs a SHA-pinned mise setup (%d jobs, %d setups)", path, len(jobs), len(setups))
+			_, jobs, found := strings.Cut(workflow, "\njobs:\n")
+			if !found {
+				t.Fatalf("%s must define CI jobs", path)
 			}
 
-			if strings.Count(workflow, "cache: false") != len(jobs) {
-				t.Errorf("%s: disable the setup cache in every job", path)
+			starts := regexp.MustCompile(`(?m)^  [A-Za-z0-9_-]+:\n`).FindAllStringIndex(jobs, -1)
+			if len(starts) == 0 {
+				t.Fatalf("%s has no build jobs", path)
+			}
+
+			for i, start := range starts {
+				end := len(jobs)
+				if i+1 < len(starts) {
+					end = starts[i+1][0]
+				}
+
+				job := jobs[start[0]:end]
+
+				setups := regexp.MustCompile(`jdx/mise-action@[0-9a-f]{40} # v[0-9.]+`).FindAllStringIndex(job, -1)
+				if len(setups) != 1 || strings.Count(job, "cache: false") != 1 {
+					t.Errorf("%s job %s needs one SHA-pinned mise setup with caching disabled", path, strings.TrimSpace(jobs[start[0]:start[1]]))
+				}
+
+				if strings.Contains(job, "install_args:") && regexp.MustCompile(`install_args:.*@`).MatchString(job) {
+					t.Errorf("%s must not pin tool versions in install_args", path)
+				}
 			}
 		}
 	})

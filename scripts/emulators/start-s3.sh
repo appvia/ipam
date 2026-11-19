@@ -2,7 +2,7 @@
 # Copyright 2026 Appvia Ltd.
 # SPDX-License-Identifier: Apache-2.0
 
-# Locates or installs a MinIO server binary without Docker, starts it in the
+# Locates the mise-installed MinIO server binary without Docker, starts it in the
 # background on a fresh data directory, creates the test bucket, and selects
 # the S3 emulator by running the conditional-write probe (MinIO first, then the
 # in-process gofakes3 fallback). The selection is recorded in $STATE_DIR/s3.json.
@@ -12,13 +12,7 @@
 # line is printed, because S3 integration runs only against real AWS
 # (IPAM_TEST_S3_BUCKET). Stop MinIO with scripts/emulators/stop.sh.
 #
-# Install order:
-#   1. minio on PATH
-#   2. a binary cached by an earlier run of this script
-#   3. brew install minio/stable/minio   (only while dl.min.io still serves it)
-#   4. direct download from dl.min.io     (only while dl.min.io still serves it)
-#   5. go install of the final upstream commit (the repository is archived and
-#      dl.min.io answers 410 Gone, so this is the working route today)
+# Install tools beforehand with mise install --locked.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source-path=SCRIPTDIR
@@ -31,25 +25,9 @@ console_port="${IPAM_S3_CONSOLE_PORT:-9001}"
 bucket="${IPAM_S3_BUCKET_NAME:-ipam-test}"
 access_key="minioadmin"
 secret_key="minioadmin"
-minio_module_version="${IPAM_MINIO_GO_VERSION:-v0.0.0-20260212201848-7aac2a2c5b7c}"
-bin_dir="$STATE_DIR/bin"
 logfile="$STATE_DIR/minio.log"
 attempts="$STATE_DIR/minio.attempts"
 selection="$STATE_DIR/s3-selection.json"
-
-case "$(uname -s)" in
-Darwin) os=darwin ;;
-Linux) os=linux ;;
-*) die "unsupported OS $(uname -s)" ;;
-esac
-
-case "$(uname -m)" in
-arm64 | aarch64) arch=arm64 ;;
-x86_64 | amd64) arch=amd64 ;;
-*) die "unsupported architecture $(uname -m)" ;;
-esac
-
-download_url="https://dl.min.io/server/minio/release/$os-$arch/minio"
 
 : >"$attempts"
 rm -f "$selection"
@@ -60,7 +38,7 @@ minio_bin=""
 minio_source=""
 
 locate_minio() {
-	local path status
+	local path
 
 	if path="$(command -v minio)"; then
 		minio_bin="$path"
@@ -68,60 +46,7 @@ locate_minio() {
 		return 0
 	fi
 
-	attempt "PATH: minio not found"
-
-	if [[ -x "$bin_dir/minio" && -s "$bin_dir/minio.source" ]]; then
-		minio_bin="$bin_dir/minio"
-		minio_source="$(cat "$bin_dir/minio.source") (cached at $bin_dir/minio)"
-		return 0
-	fi
-
-	attempt "cache: no binary at $bin_dir/minio"
-
-	status="$(curl -sS -o /dev/null -w '%{http_code}' -I -m 20 "$download_url" || echo "unreachable")"
-
-	if [[ "$status" == 200 ]]; then
-		if command -v brew >/dev/null 2>&1 &&
-			HOMEBREW_NO_AUTO_UPDATE=1 bounded 600 brew install minio/stable/minio >&2; then
-			minio_bin="$(brew --prefix)/bin/minio"
-			minio_source="brew install minio/stable/minio"
-			return 0
-		fi
-
-		attempt "brew: install minio/stable/minio failed or brew missing"
-
-		mkdir -p "$bin_dir"
-
-		if bounded 600 curl -fsSL -o "$bin_dir/minio.tmp" "$download_url"; then
-			chmod +x "$bin_dir/minio.tmp"
-			mv "$bin_dir/minio.tmp" "$bin_dir/minio"
-			echo "download $download_url" >"$bin_dir/minio.source"
-			minio_bin="$bin_dir/minio"
-			minio_source="download $download_url"
-			return 0
-		fi
-
-		attempt "download: $download_url failed"
-	else
-		attempt "brew: skipped, minio/stable/minio downloads from dl.min.io which answered HTTP $status"
-		attempt "download: skipped, $download_url answered HTTP $status"
-	fi
-
-	if command -v go >/dev/null 2>&1; then
-		mkdir -p "$bin_dir"
-
-		if GOBIN="$bin_dir" GOFLAGS=-mod=mod bounded 1200 \
-			go install "github.com/minio/minio@$minio_module_version" >&2; then
-			echo "go install github.com/minio/minio@$minio_module_version" >"$bin_dir/minio.source"
-			minio_bin="$bin_dir/minio"
-			minio_source="go install github.com/minio/minio@$minio_module_version"
-			return 0
-		fi
-
-		attempt "go install: github.com/minio/minio@$minio_module_version failed"
-	else
-		attempt "go install: go not on PATH"
-	fi
+	attempt "PATH: minio not found; run mise install --locked"
 
 	return 1
 }

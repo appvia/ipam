@@ -97,5 +97,16 @@ if [ "$rc" -eq 1 ] && grep -qF 'missing license header: .github/workflows/other.
   ok "synced: agentic-delivery files skipped, other workflow flagged"
 else bad "synced scenario (rc=$rc)"; cat "$TMP/f.out" >&2; fi
 
+# (g) mise dependency graphs are generated, digest-checked third-party metadata.
+"$HEADERS" >/dev/null
+mkdir -p .mise/locks/npm-example/1.2.3
+printf "lockfileVersion: '9.0'\n" >.mise/locks/npm-example/1.2.3/aube-lock.yaml
+git add .mise/locks/npm-example/1.2.3/aube-lock.yaml
+before="$(cat .mise/locks/npm-example/1.2.3/aube-lock.yaml)"
+if "$HEADERS" --check && "$HEADERS" >"$TMP/g.out" && [ ! -s "$TMP/g.out" ] &&
+  [ "$(cat .mise/locks/npm-example/1.2.3/aube-lock.yaml)" = "$before" ]; then
+  ok "mise: generated dependency graph skipped without changing its digest"
+else bad "mise dependency graph scenario"; fi
+
 echo "passed=$pass failed=$failures"
 [ "$failures" -eq 0 ]
