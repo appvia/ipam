@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  MISE_LOCKED: "1"
+  GOTOOLCHAIN: local
+
 jobs:
   test:
     name: test (${{ matrix.os }})
@@ -21,9 +25,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          go-version-file: go.mod
+          cache: false
+          install_args: go
       - name: Test (race)
         if: runner.os == 'Linux'
         run: make test
@@ -36,24 +41,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          go-version-file: go.mod
+          cache: false
+          install_args: go golangci-lint
       - name: Lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.14.0
+        run: golangci-lint run
       - name: License headers
         run: ./scripts/license-headers.sh --check
+      - name: Script tests
+        run: make test-scripts
 
   integration:
     name: integration (emulators)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          go-version-file: go.mod
+          cache: false
+          install_args: go node jq npm:azurite go:github.com/minio/minio
       - name: Start emulators and probe
         run: |
           bash scripts/emulators/start-azurite.sh

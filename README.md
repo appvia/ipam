@@ -964,6 +964,22 @@ has a pool or reservations document.
 
 ## Testing and verification status
 
+Install the exact development and CI toolchain with `mise install --locked`
+from the repository root. `mise.toml` is the only tool-version source;
+`mise.lock` records verified downloads for Linux, macOS (Intel and Apple
+Silicon), and Windows. The npm Azurite tool also needs its committed dependency
+graph under `.mise/locks/`; MinIO is built from its exact Go module version
+through mise's checksum-verifying Go backend. Emulator launchers use these
+installed binaries and never download tools themselves.
+
+After changing a tool pin, run
+`mise lock --platform linux-x64,macos-arm64,macos-x64,windows-x64`, then
+`mise install --locked`, and commit the manifest, lockfile, and any updated
+`.mise/locks/` files together. Keep `go.mod`'s language version aligned with
+the Go pin; CI disables automatic Go toolchain downloads. The
+`TestConstitutionCIII4Toolchain` regression check enforces the locked toolchain
+and mise-only installation in test and release CI.
+
 `make test` runs the unit suite with the race detector. `make lint` runs
 golangci-lint. The backends also have integration tests against emulators
 (Azurite and an S3-compatible server; see `scripts/emulators`). They're behind

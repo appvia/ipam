@@ -12,8 +12,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib.sh"
 
 port="${IPAM_AZURITE_PORT:-10000}"
-# The npm package is "azurite"; it ships the "azurite-blob" binary.
-version="${IPAM_AZURITE_VERSION:-3.37.0}"
+command -v azurite-blob >/dev/null 2>&1 || die "azurite-blob not found; run mise install --locked"
+version="$(azurite-blob --version)"
 logfile="$STATE_DIR/azurite.log"
 
 if port_open 127.0.0.1 "$port"; then
@@ -26,7 +26,7 @@ data_dir="$(mktemp -d "$tmp_root/ipam-azurite.XXXXXX")"
 
 # set -m gives the launch its own process group, which stop.sh relies on.
 set -m
-nohup npx --yes --package "azurite@$version" azurite-blob \
+nohup azurite-blob \
 	--silent --skipApiVersionCheck --disableTelemetry \
 	--location "$data_dir" \
 	--blobHost 127.0.0.1 --blobPort "$port" \
@@ -39,16 +39,15 @@ echo "$data_dir" >"$STATE_DIR/azurite.data"
 
 record_launch azurite "$pid"
 
-# The first run downloads the package, so allow a generous bounded wait.
 wait_port 127.0.0.1 "$port" "${IPAM_AZURITE_START_TIMEOUT:-180}" "$pid" "$logfile"
 
-# Re-record once listening so the node child that npx spawns is captured too.
+# Re-record once listening so any child processes are captured too.
 record_launch azurite "$pid"
 
 conn="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:$port/devstoreaccount1;"
 
 jq -n --arg version "$version" --arg conn "$conn" --arg data "$data_dir" \
-	--argjson pid "$pid" --arg source "npx --yes --package azurite@$version azurite-blob" \
+	--argjson pid "$pid" --arg source "mise: azurite-blob" \
 	'{version: $version, source: $source, connection_string: $conn, data_dir: $data, pid: $pid}' \
 	>"$STATE_DIR/azurite.json"
 

@@ -3,4 +3,9 @@
 
 [tools]
 go = "1.27.3"
+"go:github.com/minio/minio" = "0.0.0-20260212201848-7aac2a2c5b7c"
 golangci-lint = "2.14.0"
+goreleaser = "2.20.2"
+jq = "1.8.2"
+node = "26.13.1"
+"npm:azurite" = "3.37.0"
