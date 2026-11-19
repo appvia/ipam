@@ -138,7 +138,7 @@ func (c *cli) doctorCommand() *cobra.Command {
 				return err
 			}
 
-			backend, err := c.prepareBackend(cmd)
+			backend, err := c.prepareDoctorBackend(cmd)
 			if err != nil {
 				return err
 			}

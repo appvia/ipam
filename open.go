@@ -98,10 +98,14 @@ type allowUnverifiedBackendKey struct{}
 // WithAllowUnverifiedBackend derives a context carrying explicit consent for
 // unverified URL opening. Scope it to the intended opening; the parent is not
 // modified, and consent never changes classification or bypasses validation.
-// The marker is reserved for downstream enforcement; URL opening does not yet
-// require consent for unverified backends.
 func WithAllowUnverifiedBackend(ctx context.Context) context.Context {
 	return context.WithValue(ctx, allowUnverifiedBackendKey{}, true)
+}
+
+func allowsUnverifiedBackend(ctx context.Context) bool {
+	allowed, _ := ctx.Value(allowUnverifiedBackendKey{}).(bool)
+
+	return allowed
 }
 
 // OpenStorage builds the storage backend named by rawURL. Supported forms:
@@ -113,11 +117,17 @@ func WithAllowUnverifiedBackend(ctx context.Context) context.Context {
 //	mem://                                                         (tests only)
 //
 // Unknown schemes, credentials in the URL and malformed values are rejected
-// with ErrInvalidArgument. Error text never echoes the URL.
+// with ErrInvalidArgument. Unverified selections require a context derived by
+// WithAllowUnverifiedBackend or return ErrUnverifiedBackend before construction.
+// Error text never echoes the URL.
 func OpenStorage(ctx context.Context, rawURL string) (storage.Storage, error) {
 	target, err := parseOpenURL(rawURL)
 	if err != nil {
 		return nil, err
+	}
+
+	if classifyBackend(target) == BackendUnverified && !allowsUnverifiedBackend(ctx) {
+		return nil, unverifiedBackendError()
 	}
 
 	switch target.scheme {
@@ -143,6 +153,7 @@ func OpenStorage(ctx context.Context, rawURL string) (storage.Storage, error) {
 }
 
 // Open builds the storage backend named by rawURL and wraps it in a Client.
+// It applies the same consent policy as OpenStorage before evaluating opts.
 func Open(ctx context.Context, rawURL string, opts ...Option) (*Client, error) {
 	store, err := OpenStorage(ctx, rawURL)
 	if err != nil {

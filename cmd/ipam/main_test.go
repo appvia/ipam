@@ -173,6 +173,69 @@ func assertSupportWarning(t *testing.T, res result, count int) {
 	}
 }
 
+func assertUnverifiedRefusal(t *testing.T, h *policyHarness, res result) {
+	t.Helper()
+
+	if res.code != exitError || len(h.opened) != 0 || h.store.operations != 0 || res.stdout != "" {
+		t.Fatalf("unverified command was not refused before opening: %+v, opens %d, operations %d",
+			res, len(h.opened), h.store.operations)
+	}
+
+	for _, text := range []string{
+		"unverified backend", "--allow-unverified-backend", "IPAM_ALLOW_UNVERIFIED_BACKEND=true",
+		"conditional creation", "replacement", "deletion", "corruption",
+		"https://github.com/appvia/ipam#supported-backends",
+	} {
+		if !strings.Contains(res.stderr, text) {
+			t.Errorf("refusal missing %q: %q", text, res.stderr)
+		}
+	}
+
+	for _, marker := range []string{"fictional-bucket", "private-prefix", "store.example.test"} {
+		if strings.Contains(res.stderr, marker) {
+			t.Fatalf("refusal disclosed %q: %q", marker, res.stderr)
+		}
+	}
+}
+
+func TestCLIRefusesUnverifiedBackend(t *testing.T) {
+	commands := []struct {
+		name string
+		args []string
+	}{
+		{"pool list", []string{"pool", "list"}},
+		{"pool get", []string{"pool", "get", "fictional-pool"}},
+		{"pool create", []string{"pool", "create", "fictional-pool", "--cidr", "10.0.0.0/24"}},
+		{"pool update", []string{"pool", "update", "fictional-pool", "--description", "synthetic"}},
+		{"pool delete", []string{"pool", "delete", "fictional-pool"}},
+		{"alloc list", []string{"alloc", "list", "fictional-pool"}},
+		{"alloc get", []string{"alloc", "get", "fictional-pool", "01900000-0000-7000-8000-000000000000"}},
+		{"alloc create", []string{"alloc", "create", "fictional-pool", "--prefix-length", "24"}},
+		{"alloc update", []string{"alloc", "update", "fictional-pool", "01900000-0000-7000-8000-000000000000", "--description", "synthetic"}},
+		{"alloc release", []string{"alloc", "release", "fictional-pool", "01900000-0000-7000-8000-000000000000"}},
+	}
+
+	for _, selector := range []string{"flag", "environment"} {
+		for _, command := range commands {
+			t.Run("AC-6/"+selector+"/"+command.name, func(t *testing.T) {
+				h := newPolicyHarness(t)
+				env := map[string]string{}
+				args := slices.Clone(command.args)
+
+				if selector == "flag" {
+					args = append(args, "--backend", testUnverifiedBackend)
+				} else {
+					env["IPAM_BACKEND"] = testUnverifiedBackend
+				}
+
+				res := h.run(env, args...)
+				assertUnverifiedRefusal(t, h, res)
+				assertSupportWarning(t, res, 0)
+			})
+		}
+	}
+}
+
 func TestCLIUnverifiedFlagConsent(t *testing.T) {
 	for _, command := range []string{"pool", "doctor"} {
 		for _, selector := range []string{"flag", "environment"} {
@@ -251,11 +314,7 @@ func TestCLIExplicitFalseOverridesEnvironment(t *testing.T) {
 						doctorCheck{"write-probe", "", statusWarn, probeSkipDetail})
 					assertOpeningConsent(t, h, true)
 				} else {
-					if res.code != exitOK {
-						t.Fatalf("pre-enforcement command: %+v", res)
-					}
-
-					assertOpeningConsent(t, h, false)
+					assertUnverifiedRefusal(t, h, res)
 				}
 
 				assertSupportWarning(t, res, 0)
@@ -291,11 +350,7 @@ func TestCLIConsentDefaultsClosed(t *testing.T) {
 						doctorCheck{"write-probe", "", statusWarn, probeSkipDetail})
 					assertOpeningConsent(t, h, true)
 				} else {
-					if res.code != exitOK {
-						t.Fatalf("pre-enforcement command: %+v", res)
-					}
-
-					assertOpeningConsent(t, h, false)
+					assertUnverifiedRefusal(t, h, res)
 				}
 
 				assertSupportWarning(t, res, 0)
@@ -350,7 +405,13 @@ func TestCLIUnverifiedWarningOncePerInvocation(t *testing.T) {
 		assertSupportWarning(t, result{stderr: stderr.String()}, 1)
 	})
 	t.Run("AC-12/verified silence and AC-18/shared classifier", func(t *testing.T) {
-		for _, backend := range []string{"mem://", "file:///fictional", "s3://fictional-bucket", "s3://fictional-bucket?endpoint=https://s3.amazonaws.com", "azblob://fictional.blob.core.windows.net/container", "azblob://container/prefix", "s3://fictional-bucket?endpoint=https://amazonaws.com.example.test"} {
+		for _, backend := range []string{
+			"mem://", "file:///fictional", "s3://fictional-bucket",
+			"s3://fictional-bucket?endpoint=https://s3.amazonaws.com",
+			"s3://fictional-bucket?endpoint=https://s3.cn-north-1.amazonaws.com.cn",
+			"azblob://fictional.blob.core.windows.net/container", "azblob://container/prefix",
+			"s3://fictional-bucket?endpoint=https://amazonaws.com.example.test",
+		} {
 			h := newPolicyHarness(t)
 
 			classification, err := ipam.ClassifyBackend(backend)
@@ -359,13 +420,21 @@ func TestCLIUnverifiedWarningOncePerInvocation(t *testing.T) {
 			}
 
 			for _, consent := range []string{"false", "true", "true", "false"} {
+				opensBefore := len(h.opened)
+				operationsBefore := h.store.operations
 				res := h.run(map[string]string{"IPAM_BACKEND": backend, "IPAM_ALLOW_UNVERIFIED_BACKEND": consent}, "pool", "list")
-				if res.code != exitOK {
+				want := 0
+
+				allowed := classification == ipam.BackendVerified || consent == "true"
+				if allowed && res.code != exitOK {
 					t.Fatalf("command: %+v", res)
 				}
 
-				want := 0
-				if classification == ipam.BackendUnverified && consent == "true" {
+				if !allowed {
+					if res.code != exitError || len(h.opened) != opensBefore || h.store.operations != operationsBefore {
+						t.Fatalf("closed-consent command reached its opener or store: %+v", res)
+					}
+				} else if classification == ipam.BackendUnverified {
 					want = 1
 				}
 
