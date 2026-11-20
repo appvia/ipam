@@ -5,11 +5,15 @@ package azblob
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"syscall"
 
@@ -40,10 +44,10 @@ func mapError(err error) error {
 	case errors.As(err, &respErr) && respErr.StatusCode == http.StatusForbidden:
 		sentinel = storage.ErrAccessDenied
 	default:
-		return err
+		return redactTransportError(err)
 	}
 
-	return fmt.Errorf("%w: %w", sentinel, err)
+	return fmt.Errorf("%w: %w", sentinel, redactTransportError(err))
 }
 
 // shouldRetry replaces azcore's default retry predicate, so it reproduces the
@@ -52,7 +56,7 @@ func mapError(err error) error {
 // storage.WithAccessPropagationRetry. 412, 409 and 404 are never retried.
 func shouldRetry(resp *http.Response, err error) bool {
 	if err != nil {
-		return true
+		return !permanentTransportError(err)
 	}
 
 	if resp == nil {
@@ -73,6 +77,62 @@ func shouldRetry(resp *http.Response, err error) bool {
 	}
 }
 
+func permanentTransportError(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.IsNotFound || (!dnsErr.IsTimeout && !dnsErr.IsTemporary)
+	}
+
+	var certificateError *tls.CertificateVerificationError
+	if errors.As(err, &certificateError) {
+		return true
+	}
+
+	var (
+		unknownAuthority   x509.UnknownAuthorityError
+		invalidCertificate x509.CertificateInvalidError
+		hostnameError      x509.HostnameError
+		rootsError         x509.SystemRootsError
+		recordHeaderError  tls.RecordHeaderError
+	)
+
+	return errors.As(err, &unknownAuthority) || errors.As(err, &invalidCertificate) ||
+		errors.As(err, &hostnameError) || errors.As(err, &rootsError) || errors.As(err, &recordHeaderError)
+}
+
+type redactedTransportError struct {
+	err error
+}
+
+func (e *redactedTransportError) Error() string {
+	var dnsErr *net.DNSError
+	if errors.As(e.err, &dnsErr) {
+		return "transport request failed: DNS lookup failed"
+	}
+
+	if permanentTransportError(e.err) {
+		return "transport request failed: connection validation failed"
+	}
+
+	return "transport request failed"
+}
+
+func (e *redactedTransportError) Unwrap() error { return e.err }
+
+func redactTransportError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) || strings.Contains(err.Error(), "http://") ||
+		strings.Contains(err.Error(), "https://") {
+		return &redactedTransportError{err: err}
+	}
+
+	return err
+}
+
 type outcomeKey struct{}
 
 // outcome records whether any attempt of one conditional write may have been
@@ -88,11 +148,13 @@ type outcome struct {
 // The boundary for a failed attempt is the moment request bytes may have left
 // the client. With a net/http transport this is httptrace's WroteHeaders: it
 // fires only after DNS, dial, TLS handshake and connection reuse have
-// succeeded, so failures before it (cancelled context, DNS, refused or failed
-// dial, TLS handshake) cannot have reached the service. A response with 408 or
-// 5xx proves the request arrived and may have been applied. Other transports
-// cannot be traced, so any of their errors except DNS and connection refused
-// counts as possibly applied.
+// succeeded, and GotConn confirms the client acquired a connection. Requiring
+// both avoids treating a refused dial as sent on platforms that call
+// WroteHeaders before surfacing the dial error. Failures before that point
+// (cancelled context, DNS, refused or failed dial, TLS handshake) cannot have
+// reached the service. A response with 408 or 5xx proves the request arrived
+// and may have been applied. Other transports cannot be traced, so any of
+// their errors except DNS and connection refused counts as possibly applied.
 type outcomePolicy struct{}
 
 func (outcomePolicy) Do(req *policy.Request) (*http.Response, error) {
@@ -101,10 +163,11 @@ func (outcomePolicy) Do(req *policy.Request) (*http.Response, error) {
 		return req.Next()
 	}
 
-	var wroteHeaders atomic.Bool
+	var gotConnection, wroteHeaders atomic.Bool
 
 	if o.traced {
 		req = req.WithContext(httptrace.WithClientTrace(req.Raw().Context(), &httptrace.ClientTrace{
+			GotConn:      func(httptrace.GotConnInfo) { gotConnection.Store(true) },
 			WroteHeaders: func() { wroteHeaders.Store(true) },
 		}))
 	}
@@ -117,7 +180,7 @@ func (outcomePolicy) Do(req *policy.Request) (*http.Response, error) {
 			o.mayHaveApplied.Store(true)
 		}
 	case o.traced:
-		if wroteHeaders.Load() {
+		if gotConnection.Load() && wroteHeaders.Load() {
 			o.mayHaveApplied.Store(true)
 		}
 	default:
@@ -163,6 +226,7 @@ func (s *Store) write(ctx context.Context, op, key string, do func(context.Conte
 	o := &outcome{traced: s.traced}
 
 	err := do(context.WithValue(ctx, outcomeKey{}, o))
+	err = redactTransportError(err)
 
 	switch {
 	case err == nil:

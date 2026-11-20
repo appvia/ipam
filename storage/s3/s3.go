@@ -37,6 +37,7 @@ import (
 const (
 	propagationMaxAttempts = 10
 	propagationMaxBackoff  = 30 * time.Second
+	requestTimeout         = time.Minute
 )
 
 // Config configures the S3 backend.
@@ -71,6 +72,10 @@ var _ storage.Storage = (*Store)(nil)
 
 // New builds an S3 store. It makes no network calls.
 func New(ctx context.Context, cfg Config) (*Store, error) {
+	return newStore(ctx, cfg, requestTimeout)
+}
+
+func newStore(ctx context.Context, cfg Config, timeout time.Duration) (*Store, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("s3: bucket is required")
 	}
@@ -89,6 +94,13 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		return nil, errors.New("s3: region is required (set Config.Region or AWS_REGION)")
 	}
 
+	httpClient := awsCfg.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	awsCfg.HTTPClient = requestTimeoutClient{client: httpClient, timeout: timeout}
+
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.UsePathStyle = cfg.UsePathStyle
 
@@ -100,6 +112,47 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	})
 
 	return &Store{client: client, bucket: cfg.Bucket, prefix: normalisePrefix(cfg.Prefix)}, nil
+}
+
+type requestTimeoutClient struct {
+	client  aws.HTTPClient
+	timeout time.Duration
+}
+
+func (client requestTimeoutClient) Do(req *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(req.Context(), client.timeout)
+
+	resp, err := client.client.Do(req.WithContext(ctx))
+	if err != nil {
+		cancel()
+
+		return resp, err
+	}
+
+	resp.Body = &requestTimeoutBody{ReadCloser: resp.Body, cancel: cancel}
+
+	return resp, nil
+}
+
+type requestTimeoutBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (body *requestTimeoutBody) Read(data []byte) (int, error) {
+	n, err := body.ReadCloser.Read(data)
+	if err != nil {
+		body.cancel()
+	}
+
+	return n, err
+}
+
+func (body *requestTimeoutBody) Close() error {
+	err := body.ReadCloser.Close()
+	body.cancel()
+
+	return err
 }
 
 func normalisePrefix(prefix string) string {
@@ -278,10 +331,11 @@ func (s *Store) callOptions(ctx context.Context) []func(*s3.Options) {
 // did not succeed.
 //
 // The boundary for a failed attempt is the moment request bytes may have left
-// the client: net/http's httptrace WroteHeaders fires only after DNS, dial,
-// TLS handshake and connection reuse have succeeded, so failures before it
-// cannot have reached S3. A 408 or 5xx response proves the request arrived
-// and may have been applied; any other response proves it was not.
+// the client: net/http must report an acquired connection and WroteHeaders.
+// Requiring both avoids treating a refused dial as sent on platforms that call
+// WroteHeaders before surfacing the dial error. A 408 or 5xx response proves
+// the request arrived and may have been applied; any other response proves it
+// was not.
 type writeOutcome struct {
 	mayHaveApplied atomic.Bool
 }
@@ -298,9 +352,10 @@ func (w *writeOutcome) track(o *s3.Options) {
 func (w *writeOutcome) record(
 	ctx context.Context, in middleware.DeserializeInput, next middleware.DeserializeHandler,
 ) (middleware.DeserializeOutput, middleware.Metadata, error) {
-	var wroteHeaders atomic.Bool
+	var gotConnection, wroteHeaders atomic.Bool
 
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn:      func(httptrace.GotConnInfo) { gotConnection.Store(true) },
 		WroteHeaders: func() { wroteHeaders.Store(true) },
 	})
 
@@ -310,7 +365,7 @@ func (w *writeOutcome) record(
 		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= http.StatusInternalServerError {
 			w.mayHaveApplied.Store(true)
 		}
-	} else if err != nil && wroteHeaders.Load() {
+	} else if err != nil && gotConnection.Load() && wroteHeaders.Load() {
 		w.mayHaveApplied.Store(true)
 	}
 
@@ -323,7 +378,7 @@ func (w *writeOutcome) record(
 // reached S3 or S3 answered definitively, and the usual mapping applies.
 func (w *writeOutcome) mapError(err error) error {
 	if w.mayHaveApplied.Load() {
-		return fmt.Errorf("%w: %w", storage.ErrUnknownOutcome, err)
+		return fmt.Errorf("%w: %w", storage.ErrUnknownOutcome, redactRequestError(err))
 	}
 
 	return mapError(err)
@@ -346,11 +401,11 @@ func mapError(err error) error {
 	if errors.As(err, &apiErr) {
 		switch apiErr.ErrorCode() {
 		case "NoSuchBucket":
-			return err
+			return redactRequestError(err)
 		case "NoSuchKey", "NotFound":
-			return fmt.Errorf("%w: %w", storage.ErrNotFound, err)
+			return fmt.Errorf("%w: %w", storage.ErrNotFound, redactRequestError(err))
 		case "PreconditionFailed", "ConditionalRequestConflict":
-			return fmt.Errorf("%w: %w", storage.ErrPreconditionFailed, err)
+			return fmt.Errorf("%w: %w", storage.ErrPreconditionFailed, redactRequestError(err))
 		}
 	}
 
@@ -358,12 +413,31 @@ func mapError(err error) error {
 	if errors.As(err, &respErr) {
 		switch respErr.HTTPStatusCode() {
 		case http.StatusNotFound:
-			return fmt.Errorf("%w: %w", storage.ErrNotFound, err)
+			return fmt.Errorf("%w: %w", storage.ErrNotFound, redactRequestError(err))
 		case http.StatusPreconditionFailed:
-			return fmt.Errorf("%w: %w", storage.ErrPreconditionFailed, err)
+			return fmt.Errorf("%w: %w", storage.ErrPreconditionFailed, redactRequestError(err))
 		case http.StatusForbidden:
-			return fmt.Errorf("%w: %w", storage.ErrAccessDenied, err)
+			return fmt.Errorf("%w: %w", storage.ErrAccessDenied, redactRequestError(err))
 		}
+	}
+
+	return redactRequestError(err)
+}
+
+type redactedRequestError struct {
+	err error
+}
+
+func (e *redactedRequestError) Error() string { return "S3 request failed (endpoint redacted)" }
+func (e *redactedRequestError) Unwrap() error { return e.err }
+
+func redactRequestError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if strings.Contains(err.Error(), "http://") || strings.Contains(err.Error(), "https://") {
+		return &redactedRequestError{err: err}
 	}
 
 	return err

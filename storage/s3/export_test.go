@@ -4,12 +4,17 @@
 package s3
 
 import (
+	"context"
 	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
+
+func NewWithRequestTimeout(ctx context.Context, cfg Config, timeout time.Duration) (*Store, error) {
+	return newStore(ctx, cfg, timeout)
+}
 
 // WithoutRetryDelay makes every SDK retry of store immediate. The retryer
 // itself (attempt limit, retryable errors, retry quota) stays the one the

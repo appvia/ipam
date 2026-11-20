@@ -88,10 +88,15 @@ func (client *Client) allocateWithStatus(
 	}
 
 	lock := client.poolLock(poolID)
-	if err := lock.LockContext(ctx); err != nil {
+
+	locked, err := lock.LockContextOptimistically(ctx)
+	if err != nil {
 		return Allocation{}, false, err
 	}
-	defer lock.Unlock()
+
+	if locked {
+		defer lock.Unlock()
+	}
 
 	var last error
 
@@ -106,7 +111,7 @@ func (client *Client) allocateWithStatus(
 			return Allocation{}, false, contentionError("allocate", poolID, spec.ID, last)
 		}
 
-		if err := client.waitRetry(ctx, attempt-1); err != nil {
+		if err := client.waitRetryAfter(ctx, attempt-1, last); err != nil {
 			return Allocation{}, false, err
 		}
 	}
@@ -450,10 +455,15 @@ func (client *Client) removeAllocation(
 	check func(context.Context, Allocation) error,
 ) error {
 	lock := client.poolLock(poolID)
-	if err := lock.LockContext(ctx); err != nil {
+
+	locked, err := lock.LockContextOptimistically(ctx)
+	if err != nil {
 		return err
 	}
-	defer lock.Unlock()
+
+	if locked {
+		defer lock.Unlock()
+	}
 
 	var last error
 
@@ -523,7 +533,7 @@ func (client *Client) removeAllocation(
 			return contentionError("release", poolID, id, last)
 		}
 
-		if err := client.waitRetry(ctx, attempt-1); err != nil {
+		if err := client.waitRetryAfter(ctx, attempt-1, last); err != nil {
 			return err
 		}
 	}
@@ -570,10 +580,15 @@ func (client *Client) UpdateAllocationMetadata(
 	}
 
 	lock := client.poolLock(poolID)
-	if err := lock.LockContext(ctx); err != nil {
+
+	locked, err := lock.LockContextOptimistically(ctx)
+	if err != nil {
 		return err
 	}
-	defer lock.Unlock()
+
+	if locked {
+		defer lock.Unlock()
+	}
 
 	var last error
 
@@ -626,7 +641,7 @@ func (client *Client) UpdateAllocationMetadata(
 			return contentionError("update allocation", poolID, id, last)
 		}
 
-		if err := client.waitRetry(ctx, attempt-1); err != nil {
+		if err := client.waitRetryAfter(ctx, attempt-1, last); err != nil {
 			return err
 		}
 	}
