@@ -148,11 +148,13 @@ type outcome struct {
 // The boundary for a failed attempt is the moment request bytes may have left
 // the client. With a net/http transport this is httptrace's WroteHeaders: it
 // fires only after DNS, dial, TLS handshake and connection reuse have
-// succeeded, so failures before it (cancelled context, DNS, refused or failed
-// dial, TLS handshake) cannot have reached the service. A response with 408 or
-// 5xx proves the request arrived and may have been applied. Other transports
-// cannot be traced, so any of their errors except DNS and connection refused
-// counts as possibly applied.
+// succeeded, and GotConn confirms the client acquired a connection. Requiring
+// both avoids treating a refused dial as sent on platforms that call
+// WroteHeaders before surfacing the dial error. Failures before that point
+// (cancelled context, DNS, refused or failed dial, TLS handshake) cannot have
+// reached the service. A response with 408 or 5xx proves the request arrived
+// and may have been applied. Other transports cannot be traced, so any of
+// their errors except DNS and connection refused counts as possibly applied.
 type outcomePolicy struct{}
 
 func (outcomePolicy) Do(req *policy.Request) (*http.Response, error) {
@@ -161,10 +163,11 @@ func (outcomePolicy) Do(req *policy.Request) (*http.Response, error) {
 		return req.Next()
 	}
 
-	var wroteHeaders atomic.Bool
+	var gotConnection, wroteHeaders atomic.Bool
 
 	if o.traced {
 		req = req.WithContext(httptrace.WithClientTrace(req.Raw().Context(), &httptrace.ClientTrace{
+			GotConn:      func(httptrace.GotConnInfo) { gotConnection.Store(true) },
 			WroteHeaders: func() { wroteHeaders.Store(true) },
 		}))
 	}
@@ -177,7 +180,7 @@ func (outcomePolicy) Do(req *policy.Request) (*http.Response, error) {
 			o.mayHaveApplied.Store(true)
 		}
 	case o.traced:
-		if wroteHeaders.Load() {
+		if gotConnection.Load() && wroteHeaders.Load() {
 			o.mayHaveApplied.Store(true)
 		}
 	default:

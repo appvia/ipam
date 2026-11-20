@@ -331,10 +331,11 @@ func (s *Store) callOptions(ctx context.Context) []func(*s3.Options) {
 // did not succeed.
 //
 // The boundary for a failed attempt is the moment request bytes may have left
-// the client: net/http's httptrace WroteHeaders fires only after DNS, dial,
-// TLS handshake and connection reuse have succeeded, so failures before it
-// cannot have reached S3. A 408 or 5xx response proves the request arrived
-// and may have been applied; any other response proves it was not.
+// the client: net/http must report an acquired connection and WroteHeaders.
+// Requiring both avoids treating a refused dial as sent on platforms that call
+// WroteHeaders before surfacing the dial error. A 408 or 5xx response proves
+// the request arrived and may have been applied; any other response proves it
+// was not.
 type writeOutcome struct {
 	mayHaveApplied atomic.Bool
 }
@@ -351,9 +352,10 @@ func (w *writeOutcome) track(o *s3.Options) {
 func (w *writeOutcome) record(
 	ctx context.Context, in middleware.DeserializeInput, next middleware.DeserializeHandler,
 ) (middleware.DeserializeOutput, middleware.Metadata, error) {
-	var wroteHeaders atomic.Bool
+	var gotConnection, wroteHeaders atomic.Bool
 
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn:      func(httptrace.GotConnInfo) { gotConnection.Store(true) },
 		WroteHeaders: func() { wroteHeaders.Store(true) },
 	})
 
@@ -363,7 +365,7 @@ func (w *writeOutcome) record(
 		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= http.StatusInternalServerError {
 			w.mayHaveApplied.Store(true)
 		}
-	} else if err != nil && wroteHeaders.Load() {
+	} else if err != nil && gotConnection.Load() && wroteHeaders.Load() {
 		w.mayHaveApplied.Store(true)
 	}
 

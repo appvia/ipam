@@ -626,8 +626,11 @@ func TestAC3StalledConnectionHonoursPerRequestTimeout(t *testing.T) {
 
 	requestStarted := make(chan struct{})
 	release := make(chan struct{})
+
+	var signalRequest sync.Once
+
 	fake := newFake(t, func(http.ResponseWriter, *http.Request, int) {
-		close(requestStarted)
+		signalRequest.Do(func() { close(requestStarted) })
 		<-release
 	})
 	t.Cleanup(func() { close(release) })
