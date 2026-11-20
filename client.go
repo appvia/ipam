@@ -71,9 +71,30 @@ func (lock *poolMutex) LockContext(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("contention waiting for pool lock: %w", ctx.Err())
 	case <-lock.token:
 		return nil
+	}
+}
+
+func (lock *poolMutex) LockContextOptimistically(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("contention waiting for pool lock: %w", err)
+	}
+
+	if !storage.AccessPropagationRetry(ctx) {
+		return true, lock.LockContext(ctx)
+	}
+
+	if lock.disabled {
+		return false, nil
+	}
+
+	select {
+	case <-lock.token:
+		return true, nil
+	default:
+		return false, nil
 	}
 }
 
@@ -265,6 +286,19 @@ func (client *Client) waitRetry(ctx context.Context, failedAttempt int) error {
 	delay := time.Duration(binary.LittleEndian.Uint64(raw[:]) % uint64(limit+1))
 
 	return client.sleeper(ctx, delay)
+}
+
+func (client *Client) waitRetryAfter(ctx context.Context, failedAttempt int, last error) error {
+	err := client.waitRetry(ctx, failedAttempt)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) && last != nil {
+		return fmt.Errorf("retry wait timed out: %w", errors.Join(err, last))
+	}
+
+	return err
 }
 
 func (client *Client) attemptsExhausted(attempt int) bool {

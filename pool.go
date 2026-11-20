@@ -84,7 +84,7 @@ func (client *Client) CreatePool(ctx context.Context, spec PoolSpec) (Pool, erro
 			return Pool{}, createRetryError(spec.ID, outcome, err)
 		}
 
-		if waitErr := client.waitRetry(ctx, attempt-1); waitErr != nil {
+		if waitErr := client.waitRetryAfter(ctx, attempt-1, err); waitErr != nil {
 			return Pool{}, waitErr
 		}
 	}
@@ -130,12 +130,17 @@ func (client *Client) createPoolAttempt(
 	spec PoolSpec,
 ) (Pool, createOutcome, error) {
 	lock := client.poolLock(spec.ID)
-	if err := lock.LockContext(ctx); err != nil {
+
+	locked, err := lock.LockContextOptimistically(ctx)
+	if err != nil {
 		return Pool{}, createFinished, err
 	}
 
 	documents, err := client.readPoolDocuments(ctx, spec.ID)
-	lock.Unlock()
+
+	if locked {
+		lock.Unlock()
+	}
 
 	if err != nil {
 		return Pool{}, createFinished, err
@@ -204,13 +209,17 @@ func (client *Client) createPoolAttempt(
 
 	canonical, err := canonicalPool(pool)
 	if err == nil {
-		if err = lock.LockContext(ctx); err == nil {
+		locked, err = lock.LockContextOptimistically(ctx)
+		if err == nil {
 			var outcome createOutcome
 
 			outcome, publicationPossible, err = client.publishPool(
 				ctx, poolDocument{Pool: canonical, Incarnation: incarnation},
 			)
-			lock.Unlock()
+
+			if locked {
+				lock.Unlock()
+			}
 
 			if outcome == createFinished && err == nil {
 				return canonical, createFinished, nil
@@ -406,7 +415,7 @@ func (client *Client) deleteOwnDocument(
 			return contentionError("create pool", poolID, "", err)
 		}
 
-		if waitErr := client.waitRetry(ctx, attempt-1); waitErr != nil {
+		if waitErr := client.waitRetryAfter(ctx, attempt-1, err); waitErr != nil {
 			return waitErr
 		}
 	}
@@ -691,10 +700,15 @@ func (client *Client) UpdatePoolMetadata(
 	}
 
 	lock := client.poolLock(poolID)
-	if err := lock.LockContext(ctx); err != nil {
+
+	locked, err := lock.LockContextOptimistically(ctx)
+	if err != nil {
 		return err
 	}
-	defer lock.Unlock()
+
+	if locked {
+		defer lock.Unlock()
+	}
 
 	var last error
 
@@ -743,7 +757,7 @@ func (client *Client) UpdatePoolMetadata(
 			return contentionError("update pool", poolID, "", last)
 		}
 
-		if err := client.waitRetry(ctx, attempt-1); err != nil {
+		if err := client.waitRetryAfter(ctx, attempt-1, last); err != nil {
 			return err
 		}
 	}
@@ -841,7 +855,7 @@ func (client *Client) retryPolicyWrite(ctx context.Context, poolID string, attem
 		return contentionError("update pool policy", poolID, "", last)
 	}
 
-	return client.waitRetry(ctx, attempt-1)
+	return client.waitRetryAfter(ctx, attempt-1, last)
 }
 
 // updatePoolStrategy reports whether the pool now holds the strategy because of
@@ -1009,7 +1023,7 @@ func (client *Client) DeletePool(ctx context.Context, poolID string) error {
 			return contentionError("delete pool", poolID, "", err)
 		}
 
-		if waitErr := client.waitRetry(ctx, attempt-1); waitErr != nil {
+		if waitErr := client.waitRetryAfter(ctx, attempt-1, err); waitErr != nil {
 			return waitErr
 		}
 	}
@@ -1030,13 +1044,18 @@ func (client *Client) deletePoolAttempt(
 	target *poolDeletion,
 ) (found, retry bool, result error) {
 	lock := client.poolLock(poolID)
-	if err := lock.LockContext(ctx); err != nil {
+
+	locked, err := lock.LockContextOptimistically(ctx)
+	if err != nil {
 		return false, false, err
 	}
 
 	documents, err := client.readPoolDocuments(ctx, poolID)
 	if err != nil {
-		lock.Unlock()
+		if locked {
+			lock.Unlock()
+		}
+
 		return false, false, err
 	}
 
@@ -1062,7 +1081,9 @@ func (client *Client) deletePoolAttempt(
 	reservations := documents.reservations
 	if reservations != nil && reservations.Incarnation == target.reservationsIncarnation &&
 		len(reservations.Allocations) != 0 {
-		lock.Unlock()
+		if locked {
+			lock.Unlock()
+		}
 
 		if documents.usable() {
 			if validateErr := validate(*documents.pool, *reservations); validateErr != nil {
@@ -1079,7 +1100,10 @@ func (client *Client) deletePoolAttempt(
 		if retry, err := client.deletePoolDocument(
 			ctx, reservationsKey(poolID), documents.reservationsVersion,
 		); err != nil {
-			lock.Unlock()
+			if locked {
+				lock.Unlock()
+			}
+
 			return true, retry, err
 		}
 
@@ -1088,7 +1112,10 @@ func (client *Client) deletePoolAttempt(
 			// document meanwhile; finish the delete as shape (b) in that case.
 			documents, err = client.readPoolDocuments(ctx, poolID)
 			if err != nil || documents.pool == nil || documents.pool.Incarnation != target.incarnation {
-				lock.Unlock()
+				if locked {
+					lock.Unlock()
+				}
+
 				return true, false, err
 			}
 
@@ -1096,7 +1123,9 @@ func (client *Client) deletePoolAttempt(
 		}
 	}
 
-	lock.Unlock()
+	if locked {
+		lock.Unlock()
+	}
 
 	if target.pool == nil {
 		return reservations != nil, false, nil

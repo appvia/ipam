@@ -621,6 +621,43 @@ func TestUnknownOutcome(t *testing.T) {
 	})
 }
 
+func TestAC3StalledConnectionHonoursPerRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	requestStarted := make(chan struct{})
+	release := make(chan struct{})
+	fake := newFake(t, func(http.ResponseWriter, *http.Request, int) {
+		close(requestStarted)
+		<-release
+	})
+	t.Cleanup(func() { close(release) })
+
+	store, err := s3store.NewWithRequestTimeout(t.Context(), s3store.Config{
+		Bucket:       testBucket,
+		Region:       "us-east-1",
+		Endpoint:     fake.server.URL,
+		UsePathStyle: true,
+	}, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewWithRequestTimeout() error = %v", err)
+	}
+
+	err = opCreate.call(t.Context(), store)
+	if err == nil {
+		t.Fatal("CreateIfAbsent() error = nil, want timeout")
+	}
+
+	select {
+	case <-requestStarted:
+	default:
+		t.Fatal("CreateIfAbsent() did not reach the stalled server")
+	}
+
+	if !errors.Is(err, storage.ErrUnknownOutcome) {
+		t.Fatalf("CreateIfAbsent() error = %v, want ErrUnknownOutcome", err)
+	}
+}
+
 func TestMissingETag(t *testing.T) {
 	t.Parallel()
 

@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -503,6 +505,61 @@ func TestShouldRetry(t *testing.T) {
 				t.Fatalf("shouldRetry() = %t, want %t", got, tt.want)
 			}
 		})
+	}
+}
+
+type transportError struct {
+	calls atomic.Int32
+	err   error
+}
+
+func (transport *transportError) Do(*http.Request) (*http.Response, error) {
+	transport.calls.Add(1)
+
+	return nil, transport.err
+}
+
+func TestAC1PermanentDNSErrorFailsWithoutRetryOrURL(t *testing.T) {
+	t.Parallel()
+
+	dnsErr := &net.DNSError{Err: "no such host", Name: "missing.invalid", IsNotFound: true}
+	transport := &transportError{err: &url.Error{
+		Op: "Put", URL: "https://missing.invalid/container/key?token=dummy-token", Err: dnsErr,
+	}}
+
+	store, err := New(t.Context(), Config{
+		AccountURL: "https://missing.invalid", Container: "container", Credential: staticCredential{},
+		Transport: transport,
+		retry: func(options *policy.RetryOptions) {
+			fastRetry(options)
+			options.MaxRetries = 3
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = store.CreateIfAbsent(t.Context(), "key", []byte("x"))
+	if err == nil {
+		t.Fatal("CreateIfAbsent() error = nil, want DNS failure")
+	}
+
+	var cause *net.DNSError
+	if !errors.As(err, &cause) || !cause.IsNotFound {
+		t.Fatalf("CreateIfAbsent() error = %v, want DNS not-found cause", err)
+	}
+
+	if errors.Is(err, storage.ErrUnknownOutcome) {
+		t.Fatalf("CreateIfAbsent() error = %v, want definite pre-send failure", err)
+	}
+
+	if transport.calls.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", transport.calls.Load())
+	}
+
+	message := err.Error()
+	if strings.Contains(message, "https://") || strings.Contains(message, "dummy-token") {
+		t.Fatalf("CreateIfAbsent() error leaks transport URL: %q", message)
 	}
 }
 

@@ -330,6 +330,74 @@ func TestPoolLockWaitHonoursContextCancellation(t *testing.T) {
 	}
 }
 
+func TestAC2RetryTimeoutPreservesLastStorageError(t *testing.T) {
+	store := memory.New()
+	seed := New(store)
+	_, err := seed.CreatePool(t.Context(), PoolSpec{
+		ID: "prod", CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")},
+	})
+	assertNoError(t, err)
+
+	client := New(
+		&permanentPreconditionStore{Storage: store},
+		WithMaxAttempts(0),
+		WithSleeper(func(context.Context, time.Duration) error { return context.DeadlineExceeded }),
+	)
+
+	_, err = client.Allocate(t.Context(), "prod", AllocationSpec{PrefixLength: 25})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Allocate() error = %v, want context deadline", err)
+	}
+
+	if !errors.Is(err, storage.ErrPreconditionFailed) {
+		t.Fatalf("Allocate() error = %v, want last storage error", err)
+	}
+}
+
+func TestAC2PoolLockTimeoutReportsContention(t *testing.T) {
+	client := New(memory.New())
+	lock := client.poolLock("prod")
+	lock.Lock()
+	defer lock.Unlock()
+
+	ctx, cancel := context.WithDeadline(t.Context(), time.Unix(1, 0))
+	defer cancel()
+
+	_, err := client.Allocate(ctx, "prod", AllocationSpec{PrefixLength: 24})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Allocate() error = %v, want context deadline", err)
+	}
+
+	if !strings.Contains(err.Error(), "contention") {
+		t.Fatalf("Allocate() error = %q, want contention diagnosis", err)
+	}
+}
+
+func TestAccessPropagationDoesNotWaitForPoolLock(t *testing.T) {
+	client := New(memory.New())
+	lock := client.poolLock("prod")
+	lock.Lock()
+	defer lock.Unlock()
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := client.Allocate(
+			storage.WithAccessPropagationRetry(t.Context()), "prod", AllocationSpec{PrefixLength: 24},
+		)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("Allocate() error = %v, want ErrNotFound", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Allocate() spent the access-propagation budget waiting for the pool lock")
+	}
+}
+
 type differentRequestUnknownStore struct {
 	storage.Storage
 	once sync.Once
