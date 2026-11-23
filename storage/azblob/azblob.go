@@ -29,6 +29,17 @@ import (
 // ErrInvalidArgument reports configuration the backend refuses to use.
 var ErrInvalidArgument = errors.New("azblob: invalid argument")
 
+type redactedArgumentError struct {
+	reason string
+	err    error
+}
+
+func (e *redactedArgumentError) Error() string {
+	return ErrInvalidArgument.Error() + ": " + e.reason
+}
+
+func (e *redactedArgumentError) Unwrap() []error { return []error{ErrInvalidArgument, e.err} }
+
 const (
 	connectionStringEnv = "AZURE_STORAGE_CONNECTION_STRING"
 
@@ -99,12 +110,18 @@ func newClients(cfg Config) (*container.Client, *service.Client, error) {
 
 		client, err := container.NewClient(accountURL+"/"+url.PathEscape(cfg.Container), cfg.Credential, opts)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+			return nil, nil, &redactedArgumentError{
+				reason: "container client configuration is invalid",
+				err:    err,
+			}
 		}
 
 		svc, err := service.NewClient(accountURL, cfg.Credential, (*service.ClientOptions)(opts))
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+			return nil, nil, &redactedArgumentError{
+				reason: "service client configuration is invalid",
+				err:    err,
+			}
 		}
 
 		return client, svc, nil
@@ -122,22 +139,31 @@ func newClients(cfg Config) (*container.Client, *service.Client, error) {
 
 	endpoint, err := parse(conn)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, &redactedArgumentError{
+			reason: connectionStringEnv + " is invalid",
+			err:    err,
+		}
 	}
 
 	if cfg.AccountURL != "" && strings.TrimRight(cfg.AccountURL, "/") != strings.TrimRight(endpoint, "/") {
-		return nil, nil, fmt.Errorf("%w: account URL %q does not match the %s blob endpoint",
-			ErrInvalidArgument, cfg.AccountURL, connectionStringEnv)
+		return nil, nil, fmt.Errorf("%w: account URL does not match the %s blob endpoint",
+			ErrInvalidArgument, connectionStringEnv)
 	}
 
 	client, err := container.NewClientFromConnectionString(conn, cfg.Container, opts)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %s: %w", ErrInvalidArgument, connectionStringEnv, err)
+		return nil, nil, &redactedArgumentError{
+			reason: connectionStringEnv + " cannot construct the container client",
+			err:    err,
+		}
 	}
 
 	svc, err := service.NewClientFromConnectionString(conn, (*service.ClientOptions)(opts))
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %s: %w", ErrInvalidArgument, connectionStringEnv, err)
+		return nil, nil, &redactedArgumentError{
+			reason: connectionStringEnv + " cannot construct the service client",
+			err:    err,
+		}
 	}
 
 	// Check the URLs the SDK itself resolved, so no parsing difference between
@@ -177,12 +203,12 @@ func validateAccountURL(raw string) (string, error) {
 	case raw == "":
 		return "", fmt.Errorf("%w: account URL is required", ErrInvalidArgument)
 	case err != nil:
-		return "", fmt.Errorf("%w: account URL: %w", ErrInvalidArgument, err)
-	case u.Scheme != "https" || u.Host == "":
-		return "", fmt.Errorf("%w: account URL %q must be https://<account>.blob.core.windows.net",
-			ErrInvalidArgument, raw)
+		return "", &redactedArgumentError{reason: "account URL is malformed", err: err}
 	case u.RawQuery != "" || u.Fragment != "" || u.User != nil:
 		return "", fmt.Errorf("%w: account URL must not carry a query, fragment or user info (no SAS tokens or keys)",
+			ErrInvalidArgument)
+	case u.Scheme != "https" || u.Host == "":
+		return "", fmt.Errorf("%w: account URL must be https://<account>.blob.core.windows.net",
 			ErrInvalidArgument)
 	}
 
