@@ -883,6 +883,71 @@ func TestNewValidatesConfig(t *testing.T) {
 	}
 }
 
+func TestNewAC40ConstructorErrorsDoNotEchoConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		conn string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "plain HTTP URL carrying a SAS query",
+			cfg: Config{
+				AccountURL: "http://acct.blob.core.windows.net/?sig=dummy-token",
+				Container:  "c",
+				Credential: staticCredential{},
+			},
+			want: "azblob: invalid argument: account URL must not carry a query, fragment or user info " +
+				"(no SAS tokens or keys)",
+		},
+		{
+			name: "hostless URL carrying user information",
+			cfg: Config{
+				AccountURL: "https://user:dummy-password@",
+				Container:  "c",
+				Credential: staticCredential{},
+			},
+			want: "azblob: invalid argument: account URL must not carry a query, fragment or user info " +
+				"(no SAS tokens or keys)",
+		},
+		{
+			name: "URL that fails to parse",
+			cfg: Config{
+				AccountURL: "https://[acct.blob.core.windows.net/dummy-path",
+				Container:  "c",
+				Credential: staticCredential{},
+			},
+			want: "azblob: invalid argument: account URL is malformed",
+		},
+		{
+			name: "emulator endpoint does not match account URL",
+			conn: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=" +
+				azuriteAccountKey + ";BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1",
+			cfg: Config{
+				AccountURL: "https://different-account.blob.core.windows.net",
+				Container:  "c",
+			},
+			want: "azblob: invalid argument: account URL does not match the " +
+				"AZURE_STORAGE_CONNECTION_STRING blob endpoint",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(connectionStringEnv, tt.conn)
+
+			_, err := New(t.Context(), tt.cfg)
+			if !errors.Is(err, ErrInvalidArgument) {
+				t.Fatalf("New() error = %v, want %v", err, ErrInvalidArgument)
+			}
+
+			if got := err.Error(); got != tt.want {
+				t.Errorf("New() error = %q, want fixed reason %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewAcceptsAzuriteConnectionString(t *testing.T) {
 	transport := &failingTransport{t: t}
 
