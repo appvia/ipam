@@ -885,10 +885,11 @@ func TestNewValidatesConfig(t *testing.T) {
 
 func TestNewAC40ConstructorErrorsDoNotEchoConfiguration(t *testing.T) {
 	tests := []struct {
-		name string
-		conn string
-		cfg  Config
-		want string
+		name  string
+		conn  string
+		cfg   Config
+		parse func(string) (string, error)
+		want  string
 	}{
 		{
 			name: "plain HTTP URL carrying a SAS query",
@@ -930,11 +931,30 @@ func TestNewAC40ConstructorErrorsDoNotEchoConfiguration(t *testing.T) {
 			want: "azblob: invalid argument: account URL does not match the " +
 				"AZURE_STORAGE_CONNECTION_STRING blob endpoint",
 		},
+		{
+			name: "connection string parser error",
+			conn: "dummy-connection-string-value",
+			cfg:  Config{Container: "c"},
+			parse: func(string) (string, error) {
+				return "", errors.New("parser included dummy-connection-string-value")
+			},
+			want: "azblob: invalid argument: AZURE_STORAGE_CONNECTION_STRING is invalid",
+		},
+		{
+			name: "connection string client error",
+			conn: "dummy-connection-string-value",
+			cfg:  Config{Container: "c"},
+			parse: func(string) (string, error) {
+				return "http://127.0.0.1:10000/devstoreaccount1", nil
+			},
+			want: "azblob: invalid argument: AZURE_STORAGE_CONNECTION_STRING cannot construct the container client",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(connectionStringEnv, tt.conn)
+			tt.cfg.parseConnectionString = tt.parse
 
 			_, err := New(t.Context(), tt.cfg)
 			if !errors.Is(err, ErrInvalidArgument) {
