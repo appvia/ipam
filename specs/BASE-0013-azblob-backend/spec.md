@@ -154,7 +154,7 @@ A developer connects to Azurite using its published development account through 
   - Evidence: UNTESTED (behavior in `storage/azblob/azblob.go` `New`, `Store.name`)
 
 - **AC-40**: **Given** a token-credential account URL that cannot be parsed, has no host or contains a fragment or user information, **When** a caller calls `New`, **Then** it is rejected with `azblob.ErrInvalidArgument`.
-  - Evidence: UNTESTED (behavior in `storage/azblob/azblob.go` `validateAccountURL`)
+  - Evidence: `storage/azblob/azblob_test.go` `TestNewAC40ConstructorErrorsDoNotEchoConfiguration` (malformed URL, hostless user-info URL and emulator connection-string constructor failures)
 
 - **AC-41**: **Given** a nonempty authentication-source environment flag, **When** `AuthConfigFromEnv` reads it, **Then** only the exact value `true` enables that flag; other nonempty values, including `TRUE` and `1`, disable it.
   - Evidence: UNTESTED (behavior in `storage/azblob/auth.go` `envBool`)
