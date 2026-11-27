@@ -40,7 +40,7 @@ body:
     id: test-expectations
     attributes:
       label: Test expectations
-      description: "Unit, integration or end-to-end tests that must prove each AC."
+      description: "How each AC is proven: 'AC-n test: ...' (unit, integration or end-to-end test) for behaviour, 'AC-n check: ...' (CI lint, link or schema check) for a document's structure, 'AC-n review: ...' for what a spec, ADR or runbook says."
     validations:
       required: true
   - type: textarea

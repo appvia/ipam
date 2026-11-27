@@ -2,7 +2,7 @@
 
 > **DRAFT** - not yet ratified. The platform team owns this file. Changes land through a pull request to `appvia/agentic-delivery` and reach product repos through repo-sync.
 
-**Version**: 0.4.0-draft | **Ratified**: pending | **Last amended**: 2026-11-27
+**Version**: 0.5.0-draft | **Ratified**: pending | **Last amended**: 2026-11-27
 
 This constitution sets the non-negotiables for every Requirement, spec, plan and Story delivered through the spec-driven pipeline. Agents and humans read it before writing a brief, spec, design or Story. A design that breaks a rule here must say so in its Constitution Check and get the gate approver's explicit sign-off.
 
@@ -26,7 +26,7 @@ Each principle bullet carries a stable id, `C-<roman>.<n>` (roman numeral of the
 - **C-II.3** Tests are deterministic: no fixed sleeps, no reliance on wall-clock timing, no network calls to real third-party services.
 - **C-II.4** CI runs the full test suite on every pull request. A red build is never merged.
 - **C-II.5** Tests may not be skipped, deleted or weakened to make a build pass.
-- **C-II.6** Tests do not assert on prose. A test reads a document only when code or tooling consumes it (a schema, generated output, an executed example) or to check its structure, never to match its wording.
+- **C-II.6** Tests prove the product, not themselves. A test does not assert on prose: it reads a document only when code or tooling consumes it (a schema, generated output, an executed example) or to check its structure, never to match its wording. A test exercises the repository's own code; it does not prove an AC by running behaviour defined inside the test itself, such as a reference implementation of a contract the product does not yet implement. Shared fakes and test doubles for the product's dependencies are fine.
 
 ### III. Technology choice
 
