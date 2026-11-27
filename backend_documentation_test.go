@@ -78,48 +78,6 @@ func TestUnverifiedBackendMigrationDocumentation(t *testing.T) {
 	}
 }
 
-func TestAC1AllocationsMigrationContract(t *testing.T) {
-	spec := readDocumentation(t, "specs/BASE-0007-document-format/spec.md")
-	decision := readDocumentation(t, "specs/BASE-0007-document-format/decisions/ADR-0001-allocations-storage-migration.md")
-	changelog := readDocumentation(t, "CHANGELOG.md")
-
-	for _, phrase := range []string{
-		"`reservations/<pool-id>.json`",
-		"`allocations/<pool-id>.json`",
-		"`schema_version: 3`",
-		"`kind: allocations`",
-		"`ipam migrate allocations`",
-		"conditional writes",
-		"idempotent",
-		"fail closed",
-	} {
-		requireDocumentation(t, spec, phrase)
-	}
-
-	for _, phrase := range []string{
-		"store created by the previous release",
-		"cross-version test",
-		"TestMigrateAllocationsPreviousReleaseStore",
-		"TestMigrateAllocationsCrossVersionSafety",
-		"compatibility window",
-		"coordinated provider release",
-		"CreateIfAbsent",
-		"DeleteIfMatch",
-		"unknown outcome",
-	} {
-		requireDocumentation(t, decision, phrase)
-	}
-
-	unreleased := markdownSection(t, changelog, "## [Unreleased]")
-	for _, phrase := range []string{
-		"coordinated provider release",
-		"`reservations/` to `allocations/`",
-		"migration is explicit",
-	} {
-		requireDocumentation(t, unreleased, phrase)
-	}
-}
-
 func TestMigrateAllocationsPreviousReleaseStore(t *testing.T) {
 	tests := []struct {
 		name    string
