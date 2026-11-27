@@ -147,28 +147,27 @@ are safe.
 
 ## Test contract
 
-The documentation-only Story's executable evidence starts from a store created
-by the previous release through the legacy public client. Its
-`TestMigrateAllocationsPreviousReleaseStore` reference-migration scenarios cover
-version 1 and version 2 documents, field and policy preservation, incarnation
-pairing, the happy cutover, idempotent reruns and a stale conditional-delete
-failure that retains readable allocation state. The scenarios use synthetic
-data and the in-memory storage CAS contract; they do not add a runtime command.
+This documentation-only Story is proven by review against this decision and
+BASE-0007. The future runtime implementation Story must provide executable
+evidence rather than phrase-based checks of this document.
 
-Because the bridge dual-reads the two storage forms, the executable cross-version test
-`TestMigrateAllocationsCrossVersionSafety` exercises the previous, bridge and
-migrated clients as separate logical writers. Its happy path proves that
-pre-cutover writes remain visible to the previous client, a stale
+`TestMigrateAllocationsPreviousReleaseStore` must create a store through the
+previous release's public client, cover version 1 and version 2 documents, and
+verify field and policy preservation, incarnation pairing, the happy cutover,
+idempotent reruns and a stale conditional-delete failure that retains readable
+allocation state. It must use synthetic data and the in-memory storage CAS
+contract.
+
+Because the bridge dual-reads the two storage forms,
+`TestMigrateAllocationsCrossVersionSafety` must exercise the previous, bridge
+and migrated clients as separate logical writers. Its happy path must prove
+that pre-cutover writes remain visible to the previous client, a stale
 previous-client conditional write loses at cutover, and post-cutover reads and
-writes use only the allocations key. Its failure path creates the resumable
-both-key state and proves that the bridge performs no write. Fixed sleeps and
-real backends are not used; injected storage versions make the race
-deterministic.
-
-The future implementation Story must retain these scenarios against the real
-command and bridge, expanding them to cover crash recovery at every command
-step and backend unknown outcomes. Those runtime-only paths are not present in
-this documentation contract.
+writes use only the allocations key. Its failure path must create the resumable
+both-key state and prove that the bridge performs no write. Fixed sleeps and
+real backends are not permitted; injected storage versions must make races
+deterministic. These runtime tests must also cover crash recovery at every
+command step and backend unknown outcomes.
 
 ## Consequences
 
