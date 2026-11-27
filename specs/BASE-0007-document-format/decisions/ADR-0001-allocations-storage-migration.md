@@ -147,21 +147,28 @@ are safe.
 
 ## Test contract
 
-The implementation Story must add a named migration test that starts from a
-store created by the previous release, including version 1 and version 2
-legacy allocation documents. It must prove field preservation, policy state,
-incarnation pairing, crash recovery, CAS conflicts, unknown outcomes and
-idempotent reruns, with synthetic data only. Suggested names are
-`TestMigrateAllocationsPreviousReleaseStore` and its failure subtests.
+The documentation-only Story's executable evidence starts from a store created
+by the previous release through the legacy public client. Its
+`TestMigrateAllocationsPreviousReleaseStore` reference-migration scenarios cover
+version 1 and version 2 documents, field and policy preservation, incarnation
+pairing, the happy cutover, idempotent reruns and a stale conditional-delete
+failure that retains readable allocation state. The scenarios use synthetic
+data and the in-memory storage CAS contract; they do not add a runtime command.
 
-Because the bridge dual-reads the two storage forms, the implementation also
-requires a cross-version test with a previous client, the bridge client and the
-migrated client as separate logical writers. It must prove pre-cutover writes
-remain visible to the previous client, a stale previous-client conditional
-write loses at cutover, and post-cutover reads and writes use only the
-allocations key. Suggested name:
-`TestMigrateAllocationsCrossVersionSafety`. Fixed sleeps and real backends are
-not allowed; injected versions and outcomes cover the races deterministically.
+Because the bridge dual-reads the two storage forms, the executable cross-version test
+`TestMigrateAllocationsCrossVersionSafety` exercises the previous, bridge and
+migrated clients as separate logical writers. Its happy path proves that
+pre-cutover writes remain visible to the previous client, a stale
+previous-client conditional write loses at cutover, and post-cutover reads and
+writes use only the allocations key. Its failure path creates the resumable
+both-key state and proves that the bridge performs no write. Fixed sleeps and
+real backends are not used; injected storage versions make the race
+deterministic.
+
+The future implementation Story must retain these scenarios against the real
+command and bridge, expanding them to cover crash recovery at every command
+step and backend unknown outcomes. Those runtime-only paths are not present in
+this documentation contract.
 
 ## Consequences
 
