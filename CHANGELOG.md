@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The documented allocations storage transition from `reservations/` to
+  `allocations/` now requires the explicit `ipam migrate allocations` cutover
+  and a coordinated provider release. The release carrying the migration must
+  stop legacy writers, verify conditional-write support, and use the CAS-safe
+  bridge protocol in BASE-0007. The migration is explicit: this
+  documentation-only contract does not add the command or change runtime
+  storage yet.
 - **Breaking change:** URL-based opening now refuses unverified custom endpoints
   by default. Restore access with `--allow-unverified-backend`,
   `IPAM_ALLOW_UNVERIFIED_BACKEND=true`, or library consent through

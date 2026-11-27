@@ -28,8 +28,8 @@ As a library caller or storage operator, I want a document with an unsupported v
 
 ## Acceptance criteria *(mandatory)*
 
-- **AC-1**: **Given** a pool with ID `tenant-a`, **When** its pool document and reservations document are persisted, **Then** the documented object keys are `pools/tenant-a.json` and `reservations/tenant-a.json`, respectively.
-  - Evidence: `cmd/ipam/doctor_test.go` `TestDoctorHealthyBackendPassesWithoutChangingData` (reads `reservations/p.json` after creating pool `p`); `cmd/ipam/pool_policy_test.go` `TestPoolListWarnsAboutUnsupportedPools` (reads a document written at `pools/future.json`); key construction in `pool.go` `poolKey` and `reservationsKey`.
+- **AC-1**: **Given** a previous-release store containing a valid pool at `pools/tenant-a.json` and allocation state at `reservations/tenant-a.json`, **When** the operator runs `ipam migrate allocations` and the migration completes, **Then** the pool document is unchanged, the allocation state is byte-semantically preserved in an `allocations/tenant-a.json` document with `schema_version: 3` and `kind: allocations`, and the legacy document is removed. `reservations/` remains the legacy kind and key until this explicit migration; both keys together fail closed while the conditional cutover is incomplete.
+  - Evidence: review of this spec and [ADR-0001](decisions/ADR-0001-allocations-storage-migration.md) for the exact field mapping, migration algorithm, failure handling and mixed-version rules. The runtime migration and cross-version tests are required by the future implementation Story; this documentation-only Story does not implement executable migration behavior.
 
 - **AC-2**: **Given** a valid version 1 pool document, **When** it is read and serialized again, **Then** its `schema_version`, `kind`, `pool_id`, `incarnation`, `family`, `cidrs`, `parent`, `description` and `labels` are retained, including a parent's `pool_id` and `allocation_id` when present.
   - Evidence: `document_test.go` `TestCodecRootDocumentsRoundTrip` (library pool encode/decode and CIDR preservation); `internal/document/codec_test.go` `TestCodecGoldenFilesRoundTripByteIdentically/pool v1` and `TestCodecPoolRoundTrip` (full field retention at the internal codec boundary).
@@ -149,15 +149,17 @@ As a library caller or storage operator, I want a document with an unsupported v
 
 ## Non-functional requirements *(mandatory)*
 
-- **NFR-1**: Stored-document compatibility is limited to 2 numeric schema versions, 1 and 2. Source: `internal/document/types.go` `SchemaVersionV1` and `SchemaVersionV2`; `internal/document/codec.go` `validateEnvelope`.
+- **NFR-1**: The current codec supports 2 numeric schema versions, 1 and 2. The allocation-storage migration reserves schema version 3 for the new `allocations` kind; runtime support arrives only with the coordinated migration release. Current source: `internal/document/types.go` `SchemaVersionV1` and `SchemaVersionV2`; `internal/document/codec.go` `validateEnvelope`.
 - **NFR-2**: Serialized JSON uses 2 spaces per indentation level and ends with 1 newline character. Source: `internal/document/codec.go` `encode`; byte-level compatibility is checked by `TestCodecGoldenFilesRoundTripByteIdentically`.
 - **NFR-3**: Persisted cooldown duration has 1-second resolution and is represented as an integer number of seconds. Source: `internal/document/types.go` `Cooldown.Seconds`; `document.go` `encodeCooldownState` and `decodeCooldownState`.
+- **NFR-4**: The allocations migration uses storage conditional writes only. It never relies on a process-local lock, object-storage rename, an unversioned put or an out-of-band lease for correctness. Source contract: [ADR-0001](decisions/ADR-0001-allocations-storage-migration.md).
 
 ## Key entities *(include if the feature involves data)*
 
 - **Pool document**: The stored identity, incarnation, address family, CIDR list, optional parent reference, description and labels for a pool, at `pools/<pool-id>.json`. `kind` is `pool`. Version 2 additionally carries `strategy`; version 1 represents `lowest`. A missing parent is serialized as JSON `null`.
-- **Reservations document**: The stored pool identity and incarnation with an `allocations` object keyed by allocation ID, at `reservations/<pool-id>.json`. `kind` is `reservations`. Version 2 additionally carries cooldown and release records.
-- **Stored allocation**: A reservation's request, assigned CIDR, description, labels and creation timestamp. Its ID is the containing object's key rather than a duplicated `id` member, and its pool ID comes from the reservations document. The request has `kind` plus applicable `prefix_length` or `cidr`; empty request fields are omitted.
+- **Reservations document (legacy)**: The pre-migration stored pool identity and incarnation with an `allocations` object keyed by allocation ID, at `reservations/<pool-id>.json`. `kind` is `reservations`; version 2 additionally carries cooldown and release records. A bridge release may read this legacy form and must continue writing it before cutover so older compatible clients can read its writes.
+- **Allocations document**: The migration target at `allocations/<pool-id>.json`. It preserves the `pool_id`, `incarnation`, `allocations`, cooldown and release-record state of the legacy document, normalises absent version-1 cooldown and release-record state to `null` and `{}`, and has `schema_version: 3` and `kind: allocations`. This is the authoritative document only after the legacy key has been conditionally removed.
+- **Stored allocation**: An allocation's request, assigned CIDR, description, labels and creation timestamp. Its ID is the containing object's key rather than a duplicated `id` member, and its pool ID comes from the authoritative legacy reservations document or migrated allocations document. The request has `kind` plus applicable `prefix_length` or `cidr`; empty request fields are omitted.
 - **Carve-out**: An allocation in a parent pool that backs a child pool, identified by `pool:<child>:<incarnation>`, where `<child>` is the child's pool ID and `<incarnation>` identifies that child's lifetime.
 - **Parent reference**: A parent `pool_id` and the `allocation_id` of the child's carve-out in that parent. Creation, pairing and cleanup semantics belong to BASE-0001 pool-lifecycle.
 - **Incarnation**: The stored identity of one lifetime of a pool. Both document forms carry it. Whether two documents with different incarnations form a usable pool belongs to BASE-0001 pool-lifecycle.
@@ -172,7 +174,13 @@ As a library caller or storage operator, I want a document with an unsupported v
 - General pool ID, allocation ID, CIDR and caller-supplied metadata validation rules: see BASE-0005 input-validation. This spec covers ID and CIDR validation at the stored-document boundary; metadata read compatibility is specified in AC-39, while BASE-0005 AC-36 defines the corresponding library read behavior.
 - Error type structure, operation context and general error text: see BASE-0006 error-contract. This spec identifies the document conditions producing those errors.
 - Object-storage transport, ETags, listing semantics and backend durability: see BASE-0010 storage-contract and BASE-0011 through BASE-0013 for backend-specific behaviour.
-- A public document-codec API, a bulk schema migration command, or preservation of unrecognised JSON fields. Versions are selected when each document is serialized; this capability does not upgrade all documents together.
+- A public document-codec API or preservation of unrecognised JSON fields. The explicit bulk migration command is contractually reserved in this decision; it is not implemented by this Story.
+
+## Allocations migration contract
+
+The allocation-state rename is a schema bump from legacy `reservations` versions 1 and 2 to allocations version 3. The pool document remains version 1 or 2 and is never rewritten by the migration. The exact field mapping, command, cutover algorithm, compatibility window, failure recovery and coordinated-release requirements are normative in [ADR-0001](decisions/ADR-0001-allocations-storage-migration.md).
+
+`ipam migrate allocations` is explicit and idempotent. It requires an operator acknowledgement that legacy writers are stopped, creates the version 3 document with `CreateIfAbsent`, and removes the legacy document last with `DeleteIfMatch`. The observed storage version on every step is carried forward unchanged; a stale condition, differing object or uncertain result must fail closed. Readers and writers must not choose a winner when both `reservations/<pool-id>.json` and `allocations/<pool-id>.json` exist. They must report incomplete migration and perform no mutation until the condition is resolved. This transition must retain the storage CAS contract as the only correctness mechanism.
 
 ## Open questions *(mandatory, empty before G2)*
 

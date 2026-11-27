@@ -102,7 +102,7 @@ without replacing the pool or its live allocations.
   - Evidence: `cooldown_test.go` `TestCooldownChildCreateUsesParentPolicy`
 
 - **AC-21**: **Given** child creation fails after acquiring its parent carve-out, **When** rollback of the carve-out completes, **Then** rollback does not create a cooldown record and the range remains immediately available if child pool publication is known not to have occurred; if publication may have occurred, including an unknown write outcome followed by a not-found read, the rollback instead applies the parent's cooldown.
-  - Evidence: `cooldown_test.go` `TestCooldownChildRollbackDoesNotRecordRelease` / `reservations/child.json`, `pools/child.json` (definite publication failures only); UNTESTED for rollback after possible publication (behaviour in `pool.go` `createOwnDocument`, `publishPool`, `releaseOwnCarveOut`; `allocation.go` `release`)
+  - Evidence: `cooldown_test.go` `TestCooldownChildRollbackDoesNotRecordRelease` / legacy `reservations/child.json`, `pools/child.json` (definite publication failures only); after the explicit BASE-0007 migration this assertion uses `allocations/child.json` with the same conditional-write semantics. UNTESTED for rollback after possible publication (behaviour in `pool.go` `createOwnDocument`, `publishPool`, `releaseOwnCarveOut`; `allocation.go` `release`)
 
 - **AC-22**: **Given** an existing pool and a valid replacement policy, **When** `UpdatePoolPolicy` succeeds, **Then** a subsequent pool read returns the requested strategy and cooldown, including a change from `lowest` without cooldown to `best-fit` with strict cooldown. Stored format selection follows BASE-0007 document-format.
   - Evidence: `updatepolicy_test.go` `TestUpdatePoolPolicyUpgradeAndDowngradeRewriteDocuments`
