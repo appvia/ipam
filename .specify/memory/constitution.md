@@ -2,7 +2,7 @@
 
 > **DRAFT** - not yet ratified. The platform team owns this file. Changes land through a pull request to `appvia/agentic-delivery` and reach product repos through repo-sync.
 
-**Version**: 0.3.1-draft | **Ratified**: pending | **Last amended**: 2026-11-13
+**Version**: 0.4.0-draft | **Ratified**: pending | **Last amended**: 2026-11-27
 
 This constitution sets the non-negotiables for every Requirement, spec, plan and Story delivered through the spec-driven pipeline. Agents and humans read it before writing a brief, spec, design or Story. A design that breaks a rule here must say so in its Constitution Check and get the gate approver's explicit sign-off.
 
@@ -21,11 +21,12 @@ Each principle bullet carries a stable id, `C-<roman>.<n>` (roman numeral of the
 
 ### II. Test standards
 
-- **C-II.1** Every acceptance criterion (`AC-n`) is proven by at least one named automated test, and the PR maps each AC to its test.
+- **C-II.1** Every acceptance criterion (`AC-n`) has proof, and the PR maps each AC to it. An AC about behaviour is proven by at least one named automated test. An AC about a document's structure (it exists, has the required sections, its paths and links resolve, it validates against a schema) is proven by an automated check in CI. An AC about what a document or decision says (a spec, an ADR, a runbook) is proven by review against the AC, not by a test.
 - **C-II.2** A Bug fix starts with a failing regression test for the violated AC, and the fix follows in a later commit. A Bug that cites a constitution rule (`C-n.m`) instead starts with an automated check (CI job, lint or test) that fails while that rule is broken, and the fix follows in a later commit.
 - **C-II.3** Tests are deterministic: no fixed sleeps, no reliance on wall-clock timing, no network calls to real third-party services.
 - **C-II.4** CI runs the full test suite on every pull request. A red build is never merged.
 - **C-II.5** Tests may not be skipped, deleted or weakened to make a build pass.
+- **C-II.6** Tests do not assert on prose. A test reads a document only when code or tooling consumes it (a schema, generated output, an executed example) or to check its structure, never to match its wording.
 
 ### III. Technology choice
 
