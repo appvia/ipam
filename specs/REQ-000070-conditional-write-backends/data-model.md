@@ -43,10 +43,12 @@ operator setting or diagnostic result (AC-18).
 
 ## Unchanged persisted model
 
-`pools/<id>.json` and `reservations/<id>.json` retain their existing schema
-versions, incarnations and lifecycle documented in `doc.go` and the baseline
-document contract. `storage.Version` remains an opaque token, and all CAS
-operations remain unchanged. No classification, consent, diagnostic state,
-provider identity or support-policy cache is written to a pool, reservation,
-scratch object or configuration file. There is no data migration (scope,
-AC-17, NFR-1).
+`pools/<id>.json` and the legacy `reservations/<id>.json` retain their existing
+schema versions, incarnations and lifecycle within this backend-support
+change. A later, explicit BASE-0007 migration moves allocation state to
+`allocations/<id>.json` under its separate coordinated-release contract;
+that is not part of this requirement. `storage.Version` remains an opaque
+token, and all CAS operations remain unchanged. No classification, consent,
+diagnostic state, provider identity or support-policy cache is written to a
+pool, allocation-state, scratch or configuration object. There is no data
+migration in this requirement (scope, AC-17, NFR-1).
